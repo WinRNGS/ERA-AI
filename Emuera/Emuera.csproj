@@ -1,0 +1,146 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>WinExe</OutputType>
+        <TargetFramework>net8.0-windows</TargetFramework>
+        <RuntimeIdentifiers>win-x64;win-x86</RuntimeIdentifiers>
+        <Platforms>x64;x86</Platforms>
+        <UseWindowsForms>true</UseWindowsForms>
+        <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+        <LangVersion>12.0</LangVersion>
+        <Nullable>disable</Nullable>
+        <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+        <Configurations>Debug;Release;Debug-NAudio;Release-NAudio</Configurations>
+        <EnableNETAnalyzers>true</EnableNETAnalyzers>
+        <AnalysisMode>Minimum</AnalysisMode>
+
+        <TieredCompilation>false</TieredCompilation>
+        <ServerGarbageCollection>true</ServerGarbageCollection>
+
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <Product>Emuera</Product>
+        <AssemblyName>Emuera</AssemblyName>
+        <RootNamespace>MinorShift.Emuera</RootNamespace>
+        <ApplicationManifest>emuera.manifest</ApplicationManifest>
+        <Version>1.824</Version>
+        <InformationalVersion>1824+v24+EMv18+EEv56+Skiav10.1</InformationalVersion>
+        <Copyright>Copyright (C) 2008- MinorShift, 妊）|дﾟ)の中の人</Copyright>
+    </PropertyGroup>
+
+    <PropertyGroup>
+        <IncludeAllContentForSelfExtract>false</IncludeAllContentForSelfExtract>
+        <SelfContained>false</SelfContained>
+        <PublishReadyToRun>false</PublishReadyToRun>
+        <PublishSingleFile>true</PublishSingleFile>
+        <PublishTrimmed>false</PublishTrimmed>
+        <SelfContained>false</SelfContained>
+        <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+        <TieredCompilation>false</TieredCompilation>
+        <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+        <ApplicationIcon>icon.ico</ApplicationIcon>
+    </PropertyGroup>
+
+    <PropertyGroup Condition=" '$(Configuration)' == 'Debug-NAudio' ">
+        <DefineConstants>$(DefineConstants);DEBUG</DefineConstants>
+        <DebugSymbols>true</DebugSymbols>
+        <Optimize>false</Optimize>
+    </PropertyGroup>
+
+    <PropertyGroup Condition=" '$(Configuration)' == 'Release-NAudio' ">
+        <Optimize>true</Optimize>
+    </PropertyGroup>
+
+	<PropertyGroup Condition="$(Configuration.Contains('NAudio'))">
+		<DefineConstants>$(DefineConstants);NAudio</DefineConstants>
+		<!-- <AssemblyName>$(AssemblyName)-NAudio</AssemblyName> -->
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(Platform)' == 'x86'">
+		<DefineConstants>$(DefineConstants);x86</DefineConstants>
+		<InformationalVersion>$(InformationalVersion) x86</InformationalVersion>
+		<!-- <AssemblyName>$(AssemblyName)-x86</AssemblyName> -->
+	</PropertyGroup>
+
+	<PropertyGroup Condition="'$(Platform)' == 'x64'">
+		<DefineConstants>x64</DefineConstants>
+		<InformationalVersion>$(InformationalVersion) x64</InformationalVersion>
+		<!-- <AssemblyName>$(AssemblyName)-x64</AssemblyName> -->
+	</PropertyGroup>
+
+
+    <Choose>
+        <When Condition="$(Configuration.Contains('NAudio'))">
+            <ItemGroup Condition="$(Configuration.Contains('NAudio'))">
+                <Compile Remove="Runtime/Utils/Sound.WMP.cs" />
+            </ItemGroup>
+        </When>
+        <Otherwise />
+    </Choose>
+    
+    <ItemGroup>
+      <Compile Remove="artifacts\**" />
+      <EmbeddedResource Remove="artifacts\**" />
+      <None Remove="artifacts\**" />
+      <Page Remove="artifacts\**" />
+      <Compile Remove="Runtime\Utils\Sound.WMP.cs" />
+      <Content Include="icon.ico" />
+      <EmbeddedResource Include="Properties\lang\emuera-eng.xml" />
+      <EmbeddedResource Include="Properties\lang\emuera-zhs.xml" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <Compile Update="Properties\Settings.Designer.cs">
+            <DesignTimeSharedInput>True</DesignTimeSharedInput>
+            <AutoGen>True</AutoGen>
+            <DependentUpon>Settings.settings</DependentUpon>
+        </Compile>
+    </ItemGroup>
+
+    <ItemGroup>
+        <None Update="Properties\Settings.settings">
+            <Generator>SettingsSingleFileGenerator</Generator>
+            <LastGenOutput>Settings.Designer.cs</LastGenOutput>
+        </None>
+    </ItemGroup>
+    
+    <Choose>
+        <When Condition="'$(Platform)' == 'x64'">
+            <ItemGroup>
+                <None Update="Libs\Webp\x86_64\libsharpyuv.dll">
+                    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+                    <TargetPath>libsharpyuv.dll</TargetPath>
+                </None>
+                <None Include="Libs\Webp\x86_64\libwebp.dll">
+                    <TargetPath>libwebp.dll</TargetPath>
+                    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+                </None>
+            </ItemGroup>
+        </When>
+        <When Condition="'$(Platform)' == 'x86'">
+            <ItemGroup>
+                <None Update="Libs\Webp\x86\libsharpyuv.dll">
+                    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+                    <TargetPath>libsharpyuv.dll</TargetPath>
+                </None>
+                <None Update="Libs\Webp\x86\libwebp_x86.dll">
+                    <TargetPath>libwebp_x86.dll</TargetPath>
+                    <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+                </None>
+            </ItemGroup>
+        </When>
+    </Choose>
+    
+    <ItemGroup>
+      <PackageReference Include="Enums.NET" Version="5.0.0" />
+      <PackageReference Include="NAudio" Version="2.2.1" />
+      <PackageReference Include="NAudio.Vorbis" Version="1.5.0" />
+      <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
+      <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.0" />
+      <PackageReference Include="SkiaSharp" Version="3.119.2" />
+      <PackageReference Include="SkiaSharp.Views.WindowsForms" Version="3.119.2" />
+    </ItemGroup>
+
+
+</Project>

@@ -1,0 +1,284 @@
+using MinorShift.Emuera.GameData.Variable;
+using MinorShift.Emuera.Runtime.Config;
+using MinorShift.Emuera.Runtime.Script;
+using MinorShift.Emuera.UI.Game.Image;
+using SkiaSharp;
+using SkiaSharp.Views.Desktop;
+using System;
+using System.Drawing;
+using System.Text;
+using static MinorShift.Emuera.Runtime.Utils.EvilMask.Utils;
+
+namespace MinorShift.Emuera.UI.Game;
+
+sealed class ConsoleImagePart : AConsoleDisplayNode
+{
+	#region EM_私家版_HTMLパラメータ拡張
+	//public ConsoleImagePart(string resName, string resNameb, int raw_height, int raw_width, int raw_ypos)
+	public ConsoleImagePart(string resName, string resNameb, string resNamem, MixedNum raw_height, MixedNum raw_width, MixedNum raw_ypos, MixedNum raw_xpos, DisplayMode display, string cmVariableName = null)
+	{
+		top = 0;
+		bottom = Config.FontSize;
+		Text = "";
+		ResourceName = resName ?? "";
+		ButtonResourceName = resNameb;
+		MappingGraphName = resNamem;
+		_cmVariableName = cmVariableName;
+		StringBuilder sb = new();
+		sb.Append("<img src='").Append(ResourceName).Append('\'');
+		if (ButtonResourceName != null)
+			AddTagArg(sb, "srcb", ButtonResourceName);
+		//{
+		//	sb.Append("' srcb='");
+		//	sb.Append(ButtonResourceName);
+		//}
+		if (!string.IsNullOrEmpty(MappingGraphName))
+			AddTagArg(sb, "srcm", MappingGraphName);
+		AddTagMixedNumArg(sb, "height", raw_height);
+		AddTagMixedNumArg(sb, "width", raw_width);
+		AddTagMixedNumArg(sb, "ypos", raw_ypos);
+		AddTagMixedNumArg(sb, "xpos", raw_xpos);
+		if (display != DisplayMode.Relative)
+			AddTagArg(sb, "display", display.ToString().ToLowerInvariant());
+		//{
+		//	sb.Append("' srcm='");
+		//	sb.Append(MappingGraphName);
+		//}
+		//if(raw_height != 0)
+		//	if (raw_height != null && raw_height.num != 0)
+		//	{
+		//	sb.Append("' height='");
+		//	sb.Append(raw_height.num.ToString());
+		//	if (raw_height.isPx) sb.Append("px");
+		//}
+		//if(raw_width != 0)
+		//if (raw_width != null && raw_width.num != 0)
+		//	{
+		//	sb.Append("' width='");
+		//	sb.Append(raw_width.num.ToString());
+		//	if (raw_width.isPx) sb.Append("px");
+		//}
+		////if(raw_ypos != 0)
+		//if(raw_ypos != null && raw_ypos.num != 0)
+		//	{
+		//	sb.Append("' ypos='");
+		//	sb.Append(raw_ypos.num.ToString());
+		//	if (raw_ypos.isPx) sb.Append("px");
+		//}
+		// sb.Append("'>");
+		sb.Append('>');
+		AltText = sb.ToString();
+		cImage = AppContents.GetSprite(ResourceName);
+		//if (cImage != null && !cImage.IsCreated)
+		//	cImage = null;
+		if (cImage == null)
+		{
+			Text = AltText;
+			return;
+		}
+		int height;
+		//if (raw_height == 0)//HTMLで高さが指定されていない又は0が指定された場合、フォントサイズをそのまま高さ(px単位)として使用する。
+		if (raw_height == null || raw_height.num == 0)//HTMLで高さが指定されていない又は0が指定された場合、フォントサイズをそのまま高さ(px単位)として使用する。
+			height = Config.FontSize;
+		// else//HTMLで高さが指定された場合、フォントサイズの100分率と解釈する。
+		//	height = Config.Config.FontSize * raw_height / 100;
+		else if (raw_height.isPx)//HTMLで高さがpx指定された場合、そのまま使う。
+			height = raw_height.num;
+		else // フォントサイズの100分率と解釈する。
+			height = Config.FontSize * raw_height.num / 100;
+		//幅が指定されていない又は0が指定された場合、元画像の縦横比を維持するように幅(px単位)を設定する。1未満は端数としてXsubpixelに記録。
+		//負の値が指定される可能性があるが、最終的なWidthは正の値になるようにあとで調整する。
+		//if (raw_width == 0)
+		if (raw_width == null || raw_width.num == 0)
+		{
+			Width = cImage.DestBaseSize.Width * height / cImage.DestBaseSize.Height;
+			XsubPixel = (float)cImage.DestBaseSize.Width * height / cImage.DestBaseSize.Height - Width;
+		}
+		else if (raw_width.isPx)
+		{
+			Width = raw_width.num;
+		}
+		else
+		{
+			// Width = Config.Config.FontSize * raw_width / 100;
+			// XsubPixel = ((float)Config.Config.FontSize * raw_width / 100f) - Width;
+			Width = Config.FontSize * raw_width.num / 100;
+			XsubPixel = (float)Config.FontSize * raw_width.num / 100f - Width;
+		}
+		//top = raw_ypos * Config.Config.FontSize / 100;
+		top = raw_ypos != null ? raw_ypos.isPx ? raw_ypos.num : raw_ypos.num * Config.FontSize / 100 : 0;
+		destRect = new Rectangle(0, top, Width, height);
+		if (destRect.Width < 0)
+		{
+			destRect.X = -destRect.Width;
+			Width = -destRect.Width;
+		}
+		if (destRect.Height < 0)
+		{
+			destRect.Y = destRect.Y - destRect.Height;
+			height = -destRect.Height;
+		}
+		bottom = top + height;
+		//if(top > 0)
+		//	top = 0;
+		//if(bottom < Config.Config.FontSize)
+		//	bottom = Config.Config.FontSize;
+		if (ButtonResourceName != null)
+		{
+			cImageB = AppContents.GetSprite(ButtonResourceName);
+			//if (cImageB != null && !cImageB.IsCreated)
+			//	cImageB = null;
+		}
+		if (MappingGraphName != null)
+		{
+			cImageM = AppContents.GetSprite(MappingGraphName);
+		}
+		_display = display;
+		_positionX = raw_xpos != null ? raw_xpos.isPx ? raw_xpos.num : raw_xpos.num * Config.FontSize / 100 : 0;
+		_positionY = raw_ypos != null ? raw_ypos.isPx ? raw_ypos.num : raw_ypos.num * Config.FontSize / 100 : 0;
+		ResolveColorMatrix();
+	}
+	public readonly string MappingGraphName;
+	private readonly ASprite cImageM;
+	#endregion
+	private readonly ASprite cImage;
+	private readonly ASprite cImageB;
+	private readonly int top;
+	private readonly int bottom;
+	private readonly Rectangle destRect;
+	private float[] _colorMatrix = null;
+	public float[] ColorMatrix
+	{
+		get => _colorMatrix;
+		set => _colorMatrix = (value != null && value.Length == 20) ? value : null;
+	}
+	private readonly string _cmVariableName;
+	public string CmVariableName => _cmVariableName;
+	DisplayMode _display;
+	int _positionX;
+	int _positionY;
+
+	private void ResolveColorMatrix()
+	{
+		if (string.IsNullOrEmpty(_cmVariableName))
+			return;
+		try
+		{
+			string varName = _cmVariableName;
+			long idx1 = 0, idx2 = 0, idx3 = 0;
+			int colonPos = varName.IndexOf(':');
+			if (colonPos >= 0)
+			{
+				string baseName = varName.Substring(0, colonPos);
+				string rest = varName.Substring(colonPos + 1);
+				varName = baseName;
+				var parts = rest.Split(':');
+				if (parts.Length >= 1) long.TryParse(parts[0], out idx1);
+				if (parts.Length >= 2) long.TryParse(parts[1], out idx2);
+				if (parts.Length >= 3) long.TryParse(parts[2], out idx3);
+			}
+
+			VariableToken token = GlobalStatic.IdentifierDictionary?.GetVariableToken(varName, null, true);
+			if (token == null)
+				return;
+
+			_colorMatrix = ColorMatrixHelper.ReadFromVariable(token, idx1, idx2, idx3);
+		}
+		catch
+		{
+		}
+	}
+	//#pragma warning disable CS0649 // フィールド 'ConsoleImagePart.ia' は割り当てられません。常に既定値 null を使用します。
+	//		private readonly ImageAttributes ia;
+	//#pragma warning restore CS0649 // フィールド 'ConsoleImagePart.ia' は割り当てられません。常に既定値 null を使用します。
+	public readonly string ResourceName;
+	public readonly string ButtonResourceName;
+	public override int Top { get { return top; } }
+	public override int Bottom { get { return bottom; } }
+
+	public override bool CanDivide { get { return false; } }
+	public override void SetWidth(StringMeasure sm, float subPixel)
+	{
+		if (Error)
+		{
+			Width = 0;
+			return;
+		}
+		if (cImage != null)
+			return;
+		Width = StringMeasure.GetDisplayLength(Text, Config.DefaultFont);
+		XsubPixel = subPixel;
+	}
+
+	public override string ToString()
+	{
+		if (AltText == null)
+			return "";
+		return AltText;
+	}
+	#region EM_私家版_描画拡張
+	public override StringBuilder BuildString(StringBuilder sb)
+	{
+		if (AltText != null) sb.Append(AltText);
+		return sb;
+	}
+	#endregion
+	#region EM_私家版_imgマースク
+	public long GetMappingColor(int pointX, int pointY)
+	{
+		if (cImageM != null && cImageM.IsCreated)
+		{
+			Size spriteSize;
+			if (cImageM is SpriteF sf)
+			{
+				spriteSize = sf.DestBaseSize;
+			}
+			else if (cImageM is SpriteG sg)
+			{
+				spriteSize = sg.DestBaseSize;
+			}
+			else return 0;
+			pointX = pointX * spriteSize.Width / destRect.Width;
+			pointY = pointY * spriteSize.Height / destRect.Height;
+			var c = cImageM.SpriteGetColor(pointX, pointY).ToDrawingColor();
+			return c.ToArgb() & 0xFFFFFF;
+		}
+		return 0;
+	}
+	#endregion
+	public override void DrawTo(SKCanvas graph, SKPoint point, bool isSelecting, bool isFocus, bool isBackLog, TextDrawingMode mode, bool isButton = false)
+	{
+		if (Error)
+			return;
+		ASprite img = cImage;
+		if ((isSelecting || isFocus) && cImageB != null)
+			img = cImageB;
+
+		if (img != null && img.IsCreated)
+		{
+			Rectangle rect = destRect;
+			switch (_display)
+			{
+				case DisplayMode.Relative:
+					rect.X = destRect.X + PointX + Config.DrawingParam_ShapePositionShift;
+					rect.Y = destRect.Y + (int)point.Y;
+					break;
+				case DisplayMode.AbsoluteLeftTop:
+					rect.X = _positionX;
+					rect.Y = _positionY;
+					break;
+				case DisplayMode.AbsoluteLeftBottom:
+					rect.X = _positionX;
+					rect.Y = GlobalStatic.Console.ClientHeight + _positionY;
+					break;
+			}
+			SKColorFilter filter = _colorMatrix != null ? SKColorFilter.CreateColorMatrix(_colorMatrix) : null;
+			img.GraphicsDraw(graph, rect, filter);
+		}
+		else
+		{
+			var textPaint = new SKPaint { Color = Config.ForeColor.ToSKColor() };
+			graph.DrawText(AltText, PointX, (float)point.Y, new SKFont(), textPaint);
+		}
+	}
+}

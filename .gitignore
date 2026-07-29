@@ -1,0 +1,27 @@
+# IDE
+.vs/*
+.vscode/*
+.idea/*
+
+# Build output
+**/bin/*
+**/obj/*
+**/artifacts/**
+
+# Emuera WinForms
+Emuera/Properties/PublishProfiles/*.pubxml.user
+Emuera/Properties/launchSettings.json
+Emuera/Emuera.csproj.user
+
+# Xamarin
+Emuera.Xamarin/build_log.txt
+
+# Secrets
+*.keystore
+*.pfx
+
+# Misc
+*.diff
+*.patch
+*.user
+*.suo
