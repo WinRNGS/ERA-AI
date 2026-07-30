@@ -37,7 +37,7 @@
 
 ## AI 对话通道（本仓库新增，功能基本已实现）
 
-**本仓库的 AI 对话通道代码均为天才程序员 Claude Opus 5 独立完成。仓库拥有者只是个给你加油打气的能工智人。**
+**本仓库的 AI 对话通道代码均为天才程序员 Claude Opus 5 独立完成。仓库拥有者只是个给Claude opus 5 加油打气的能工智人。**
 
 引擎主体（SkiaSharp 渲染、浮点类型、ERD 变量系统、语法扩展等）并非本仓库成果，源码由 [minus010001/emuera_lazyloading_selfmodified_version](https://gitgud.io/minus010001/emuera_lazyloading_selfmodified_version) 的作者开源共享，AI 通道是搭在这份地基上的。
 
@@ -78,6 +78,12 @@
 | [docs/AI-词条与Prompt维护指南.md](docs/AI-词条与Prompt维护指南.md) | AI 词条库与 prompt 的维护手册（改人格/说话风格/可写数值，不需重新编译） |
 | [CHANGELOG.md](CHANGELOG.md) | 版本更新日志（Release Notes） |
 | [Readme/画蛇又添足版自改emuera相关说明.txt](Readme/画蛇又添足版自改emuera相关说明.txt) | 原始开发日志（历史参考） |
+
+---
+
+## 许可
+
+沿用上游 Emuera 的 zlib/libpng 许可，详见 [LICENSE](LICENSE)（含 fork 起点与本仓库改动清单）与 [Readme/License/Emuera.LICENSE.txt](Readme/License/Emuera.LICENSE.txt)。
 
 ---
 

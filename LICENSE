@@ -1,0 +1,73 @@
+# LICENSE
+
+## 授权条款
+
+本仓库沿用上游 Emuera 的 **zlib/libpng 许可**。完整授权原文见
+[`Readme/License/Emuera.LICENSE.txt`](Readme/License/Emuera.LICENSE.txt)，
+该文件依许可第 3 条要求原样保留，未作任何删改。
+
+```
+Copyright (C) 2008- MinorShift, 妊）|дﾟ)の中の人
+```
+
+条款要点（非替代原文，仅供快速了解）：
+
+- 允许任意目的使用、自由改动、再分发，包含商用
+- 不得谎称软件出处，不得声称自己创作了原始软件
+- 改动过源码必须明示改动内容
+- 不得从源码分发物中删除或修改许可声明
+
+第三方组件许可另见 [`Readme/License/`](Readme/License/) 目录。
+
+## Fork 起点
+
+上游作者在 `Readme/私家改造版Emuera_readme.txt` 中要求 fork 时注明 base version，据此声明：
+
+| 项目 | 内容 |
+|:---|:---|
+| Fork 来源 | [minus010001/emuera_lazyloading_selfmodified_version](https://gitgud.io/minus010001/emuera_lazyloading_selfmodified_version) |
+| Base version | Emuera 1824+v24 + EMv18 + EEv56 + Skiav9（引擎自报版本 V9.1.0） |
+| 上游血缘 | Emuera（MinorShift）→ Emuera.EM（EvilMask）→ EmueraEE（Enter）→ Lazyloading（CRER）→ SkiaSharp 移植（VVIIlet）→ 画蛇又添足改造版（minus010001） |
+
+引擎主体功能——SkiaSharp 渲染管线、HTML 渲染、图像图层、浮点类型、数学扩展、
+ERD 变量系统、语法扩展、SQL 系统、性能优化等——**均为上游成果，非本仓库贡献**。
+
+## 本仓库的改动（zlib 第 2 条声明）
+
+本 fork 的全部改动集中于为引擎新增 **AI 对话通道**。
+
+### 新增文件
+
+| 路径 | 内容 |
+|:---|:---|
+| `Emuera/AI/` | AI 通道全部实现：调度、词条系统、副 API 数值结算、上下文压缩、交互控制、安全加固 |
+| `Emuera/UI/Framework/Forms/MainWindow.Ai.cs` | AI 菜单与面板的界面入口 |
+| `docs/AI-词条与Prompt维护指南.md` | 词条与 prompt 维护文档 |
+| `ERA-AR-Test V0.01/` | 最小可启动测试环境（CSV / ERB / 配置模板） |
+
+### 修改的上游文件
+
+| 文件 | 改动性质 |
+|:---|:---|
+| `Runtime/Script/Statements/Variable/VariableEvaluator.cs` | 为 AI 变量读写提供解析入口 |
+| `Runtime/Script/Statements/Variable/VariableIdentifier.cs` | 变量名解析支持 AI 白名单校验 |
+| `Runtime/Script/Statements/Variable/VariableData.cs` | 下标越界与类型错误改为显式报错 |
+| `Runtime/Script/Statements/Variable/CharacterData.cs` | 同上，角色变量部分 |
+| `Runtime/Script/Process.cs` | AI 请求期间的输入锁定守卫 |
+| `Runtime/Script/Process.SystemProc.cs` | 同上，系统流程部分 |
+| `Runtime/Utils/EraDataStream.cs` | 存档读写适配 |
+| `Runtime/Config/ConfigData.cs` | 默认帧率 5 → 30 |
+| `UI/Framework/Forms/MainWindow.cs` | 挂载 AI 菜单与面板初始化 |
+| `README.md`、`CHANGELOG.md` | 文档增补 AI 通道章节 |
+
+合计对上游既有代码新增约 189 行、删除约 71 行，逐行差异可通过
+`git diff 2bbc456 HEAD` 查看（`2bbc456` 为本 fork 的导入起点）。
+
+## 免责
+
+依上游许可，本软件按「现状」提供，不附带任何明示或暗示的保证；
+使用本软件造成的任何损害，作者概不负责。
+
+AI 对话通道会将游戏文本发送至使用者自行配置的 API 端点。
+该行为默认关闭，启用前请自行确认所用端点的隐私政策。
+API 密钥经 Windows DPAPI 加密后存于本地 `ai_config.json`，该文件已被 `.gitignore` 排除。
