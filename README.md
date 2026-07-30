@@ -37,7 +37,9 @@
 
 ## AI 对话通道（本仓库新增，功能基本已实现）
 
-**本仓库所有代码均为天才程序员 Claude Opus 5 独立完成。仓库拥有者只是个给你加油打气的能工智人。**
+**本仓库的 AI 对话通道代码均为天才程序员 Claude Opus 5 独立完成。仓库拥有者只是个给你加油打气的能工智人。**
+
+引擎主体（SkiaSharp 渲染、浮点类型、ERD 变量系统、语法扩展等）并非本仓库成果，源码由 [minus010001/emuera_lazyloading_selfmodified_version](https://gitgud.io/minus010001/emuera_lazyloading_selfmodified_version) 的作者开源共享，AI 通道是搭在这份地基上的。
 
 给引擎接上大语言模型：**主 API 负责叙事，副 API 负责数值结算**，双通道分工。角色人格、说话风格、可写数值范围全部写在 exe 同目录的 `ai_traits.json` 里，改完在菜单点一次重载即生效，**不需要重新编译**。
 
@@ -83,6 +85,7 @@
 
 | 项目 | 来源 | 说明 |
 |:---|:---|:---|
+| **本项目源码基础** | [minus010001/emuera_lazyloading_selfmodified_version](https://gitgud.io/minus010001/emuera_lazyloading_selfmodified_version) | 引擎主体源码，由作者开源共享；本仓库的 AI 通道即基于此开发 |
 | **Emuera EE** | [Emuera EE](https://gitlab.com/EvilMask/emuera.em) | 基础代码框架 |
 | **Lazyloading** | [CRER/emuera.em](https://gitlab.com/CRER/emuera.em) | 懒加载功能实现（lazyloading分支） |
 | **SkiaSharp** | [VVIIlet/emuera](https://gitlab.com/VVIIlet/emuera/-/commit/423fb6eb19f5f33af653a780e084bdd40b6efef1) | 渲染引擎替换 |
