@@ -713,6 +713,7 @@ internal sealed partial class Process
 			{
 				console.PrintError(trerror.AutoSaveError1.Text);
 				console.PrintError(trerror.AutoSaveError2.Text);
+				printLastSaveError();
 				console.ReadAnyKey();
 			}
 		}
@@ -1043,6 +1044,7 @@ internal sealed partial class Process
 		if (!vEvaluator.SaveTo(saveTarget, vEvaluator.SAVEDATA_TEXT))
 		{
 			console.PrintError(trerror.UnexpectedSaveError.Text);
+			printLastSaveError();
 			console.ReadAnyKey();
 		}
 		
@@ -1119,6 +1121,17 @@ internal sealed partial class Process
 	{
 		loadPrevState();
 		console.ReloadErbFinished();
+	}
+
+	/// <summary>
+	/// セーブ失敗の理由を表示する。SaveTo内部でExceptionを握り潰しているため、
+	/// これがないと「原因不明のセーブエラー」しか出ずに調査できない。
+	/// </summary>
+	private void printLastSaveError()
+	{
+		string mes = MinorShift.Emuera.Runtime.Script.Statements.Variable.VariableEvaluator.LastSaveError;
+		if (!string.IsNullOrEmpty(mes))
+			console.PrintError(mes);
 	}
 
 	private bool writeSavedataTextFrom(int saveIndex)

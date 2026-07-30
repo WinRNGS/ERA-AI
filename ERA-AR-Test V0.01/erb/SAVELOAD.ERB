@@ -1,0 +1,278 @@
+﻿;===============================================================
+; SAVELOAD.ERB —— 存档管理系统（保存/读取/删除）
+;
+; 参照 伪eramaou_EX 的 SYSTEM_DATA.ERB，为 p6-harness 实现完整的
+; 分页存档槽位列表 + 确认覆盖 + 删除 功能。
+;
+; 槽位分配：
+;   0-98  手动存档
+;   99    自动存档（由引擎自动写入，此处只读）
+;
+; 页面大小固定为 10 个槽位一页。
+;
+; 硬约束遵守：
+;   - 不在事件函数内 CALL（本文件全是普通函数）
+;   - PRINTFORML 字符串 %VAR%、整数 {VAR}
+;   - SAVEGAME/LOADGAME 是引擎内置命令，但这里用 SAVEDATA/LOADDATA
+;     实现自定义界面，SAVEGAME/LOADGAME 仍可用作快捷方式
+;===============================================================
+
+;---------------------------------------------------------------
+; 保存存档界面
+;---------------------------------------------------------------
+@SYSTEM_SAVEGAME
+#DIM S_POS
+#DIM S_IDX
+#DIM S_LINECOUNT
+
+S_POS = 0
+
+$SAVE_DRAW_PAGE
+S_LINECOUNT = LINECOUNT
+
+DRAWLINE
+PRINTL 【保存存档】要保存到哪个槽位？
+DRAWLINE
+PRINTL
+
+CALL SYSTEM_LIST_SLOTS, S_POS, S_POS + 10
+
+PRINTL
+DRAWLINE
+
+; 自动存档信息
+CHKDATA 99
+IF RESULT == 0
+	PRINTFORML  [99] (自动存档) %RESULTS%
+ELSE
+	PRINTL  [99] (自动存档) ----
+ENDIF
+
+PRINTL
+PRINTL  [101] 上一页　[102] 下一页　[100] 返回
+PRINTL
+
+$SAVE_INPUT_LOOP
+INPUT
+
+S_IDX = RESULT
+SELECTCASE S_IDX
+	CASE 100
+		RETURN
+	CASE 101
+		IF S_POS - 10 >= 0
+			S_POS -= 10
+			CLEARLINE LINECOUNT - S_LINECOUNT
+			GOTO SAVE_DRAW_PAGE
+		ELSE
+			PRINTL 已经是第一页了。
+			GOTO SAVE_INPUT_LOOP
+		ENDIF
+	CASE 102
+		IF S_POS + 10 < 99
+			S_POS += 10
+			CLEARLINE LINECOUNT - S_LINECOUNT
+			GOTO SAVE_DRAW_PAGE
+		ELSE
+			PRINTL 已经是最后一页了。
+			GOTO SAVE_INPUT_LOOP
+		ENDIF
+	CASE 0 TO 98
+		IF S_IDX < S_POS || S_IDX >= S_POS + 10
+			PRINTL 请输入当前页面内的槽位号。
+			GOTO SAVE_INPUT_LOOP
+		ENDIF
+		; 检查是否已有存档
+		CHKDATA S_IDX
+		IF RESULT == 0
+			PRINTFORML 槽位 [{S_IDX}] 已有存档：%RESULTS%
+			PRINTL 确定要覆盖吗？ [1] 确定　[0] 取消
+			INPUT
+			IF RESULT != 1
+				CLEARLINE LINECOUNT - S_LINECOUNT
+				GOTO SAVE_DRAW_PAGE
+			ENDIF
+		ENDIF
+		; 执行保存
+		CALL DO_SAVE, S_IDX
+		PRINTFORML 已保存到槽位 [{S_IDX}]。
+		WAIT
+		RETURN
+	CASEELSE
+		PRINTL 无效输入。
+		GOTO SAVE_INPUT_LOOP
+ENDSELECT
+
+;---------------------------------------------------------------
+; 执行保存的内部函数
+;---------------------------------------------------------------
+@DO_SAVE, ARG
+#DIM SLOT
+SLOT = ARG
+
+; @SAVEINFO 里的 PUTFORM 会追加到 SAVEDATA_TEXT
+; 引擎内部 SAVEGAME 也是这个流程：先设时间戳再 CALL SAVEINFO
+SAVEDATA_TEXT =
+CALL SAVEINFO
+SAVEDATA SLOT, SAVEDATA_TEXT
+
+;---------------------------------------------------------------
+; 读取存档界面
+;---------------------------------------------------------------
+@SYSTEM_LOADGAME
+#DIM L_POS
+#DIM L_IDX
+#DIM L_LINECOUNT
+
+L_POS = 0
+
+$LOAD_DRAW_PAGE
+L_LINECOUNT = LINECOUNT
+
+DRAWLINE
+PRINTL 【读取存档】要载入哪个槽位？
+DRAWLINE
+PRINTL
+
+CALL SYSTEM_LIST_SLOTS, L_POS, L_POS + 10
+
+PRINTL
+DRAWLINE
+
+; 自动存档
+CHKDATA 99
+IF RESULT == 0
+	PRINTFORML  [99] (自动存档) %RESULTS%
+ELSE
+	PRINTL  [99] (自动存档) ----
+ENDIF
+
+PRINTL
+PRINTL  [101] 上一页　[102] 下一页　[100] 返回
+PRINTL
+
+$LOAD_INPUT_LOOP
+INPUT
+
+L_IDX = RESULT
+SELECTCASE L_IDX
+	CASE 100
+		RETURN
+	CASE 101
+		IF L_POS - 10 >= 0
+			L_POS -= 10
+			CLEARLINE LINECOUNT - L_LINECOUNT
+			GOTO LOAD_DRAW_PAGE
+		ELSE
+			PRINTL 已经是第一页了。
+			GOTO LOAD_INPUT_LOOP
+		ENDIF
+	CASE 102
+		IF L_POS + 10 < 99
+			L_POS += 10
+			CLEARLINE LINECOUNT - L_LINECOUNT
+			GOTO LOAD_DRAW_PAGE
+		ELSE
+			PRINTL 已经是最后一页了。
+			GOTO LOAD_INPUT_LOOP
+		ENDIF
+	CASE 0 TO 99
+		CHKDATA L_IDX
+		IF RESULT == 0
+			LOADDATA L_IDX
+		ELSE
+			PRINTFORML 槽位 [{L_IDX}] 没有存档。
+			GOTO LOAD_INPUT_LOOP
+		ENDIF
+	CASEELSE
+		PRINTL 无效输入。
+		GOTO LOAD_INPUT_LOOP
+ENDSELECT
+
+;---------------------------------------------------------------
+; 删除存档界面
+;---------------------------------------------------------------
+@SYSTEM_DELGAME
+#DIM D_POS
+#DIM D_IDX
+#DIM D_LINECOUNT
+
+D_POS = 0
+
+$DEL_DRAW_PAGE
+D_LINECOUNT = LINECOUNT
+
+DRAWLINE
+PRINTL 【删除存档】要删除哪个槽位？
+DRAWLINE
+PRINTL
+
+CALL SYSTEM_LIST_SLOTS, D_POS, D_POS + 10
+
+PRINTL
+PRINTL  [101] 上一页　[102] 下一页　[100] 返回
+PRINTL
+
+$DEL_INPUT_LOOP
+INPUT
+
+D_IDX = RESULT
+SELECTCASE D_IDX
+	CASE 100
+		RETURN
+	CASE 101
+		IF D_POS - 10 >= 0
+			D_POS -= 10
+			CLEARLINE LINECOUNT - D_LINECOUNT
+			GOTO DEL_DRAW_PAGE
+		ELSE
+			PRINTL 已经是第一页了。
+			GOTO DEL_INPUT_LOOP
+		ENDIF
+	CASE 102
+		IF D_POS + 10 < 99
+			D_POS += 10
+			CLEARLINE LINECOUNT - D_LINECOUNT
+			GOTO DEL_DRAW_PAGE
+		ELSE
+			PRINTL 已经是最后一页了。
+			GOTO DEL_INPUT_LOOP
+		ENDIF
+	CASE 0 TO 98
+		CHKDATA D_IDX
+		IF RESULT == 0
+			PRINTFORML 确定要删除槽位 [{D_IDX}] 的存档吗？ [1] 确定　[0] 取消
+			INPUT
+			IF RESULT == 1
+				DELDATA D_IDX
+				PRINTFORML 已删除槽位 [{D_IDX}] 的存档。
+			ENDIF
+			CLEARLINE LINECOUNT - D_LINECOUNT
+			GOTO DEL_DRAW_PAGE
+		ELSE
+			PRINTFORML 槽位 [{D_IDX}] 没有存档。
+			GOTO DEL_INPUT_LOOP
+		ENDIF
+	CASEELSE
+		PRINTL 无效输入。
+		GOTO DEL_INPUT_LOOP
+ENDSELECT
+
+;---------------------------------------------------------------
+; 显示存档槽位列表（通用子函数）
+; 参数：ARG = 起始槽位号, ARG:1 = 结束槽位号（不含）
+;---------------------------------------------------------------
+@SYSTEM_LIST_SLOTS, ARG, ARG:1
+#DIM SLOT_I
+
+FOR SLOT_I, ARG, ARG:1
+	IF SLOT_I >= 99
+		BREAK
+	ENDIF
+	CHKDATA SLOT_I
+	IF RESULT == 0
+		PRINTFORML  [{SLOT_I,2}] %RESULTS%
+	ELSE
+		PRINTFORML  [{SLOT_I,2}] ----
+	ENDIF
+NEXT

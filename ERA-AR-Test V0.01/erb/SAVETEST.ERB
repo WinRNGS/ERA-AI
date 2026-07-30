@@ -1,0 +1,337 @@
+﻿;===============================================================
+; SAVETEST.ERB —— 存档功能自检
+;
+; 用途：无人值守验证 SAVEDATA / LOADDATA / CHKDATA / DELDATA
+; 以及关键变量（CFLAG / CSTR / TSTR / TALENT / MARK）的存读一致性。
+;
+; 设计要点：
+;   - 使用槽位 5 作为测试槽，避免与自动存档(99)和手动存档冲突
+;   - LOADDATA 之后流程不会返回，会走 @EVENTLOAD → BEGIN SHOP
+;     因此存档后的验证分两阶段：
+;     阶段 A：写入特征值 → SAVEDATA → 立刻 CHKDATA 验证元数据
+;     阶段 B：LOADDATA 后在 @EVENTLOAD 里校验变量值
+;   - 用 FLAG:已初始化 区分阶段（值为 777 时表示正在跑自检 B 阶段）
+;   - 调用入口从主菜单 [130]
+;
+; 硬约束遵守：
+;   - 菜单编号 >= 100
+;   - 不在事件函数内 CALL（CompatiCallEvent=NO）
+;   - PRINTFORML 里字符串用 %VAR%、整数用 {VAR}
+;===============================================================
+
+;---------------------------------------------------------------
+; 存档自检入口（阶段 A）
+;---------------------------------------------------------------
+@SAVE_SELFTEST
+#DIM PASS_COUNT
+#DIM FAIL_COUNT
+#DIM CHK_RESULT
+
+PASS_COUNT = 0
+FAIL_COUNT = 0
+
+PRINTL
+DRAWLINE
+PRINTL 存档功能自检 —— 阶段 A（写入 + 存档 + 元数据校验）
+DRAWLINE
+PRINTL
+
+; --- 先清理旧测试存档 ---
+CHK_RESULT = CHKDATA(5)
+IF CHK_RESULT == 0
+	DELDATA 5
+	PRINTL 已删除旧的测试存档（槽位 5）。
+ENDIF
+
+; --- 测试 1: CHKDATA 对不存在的槽位返回 1 (FILENOTFOUND) ---
+CHK_RESULT = CHKDATA(5)
+IF CHK_RESULT == 1
+	PASS_COUNT += 1
+	PRINTL [PASS] T1: CHKDATA(5) == 1 (FILENOTFOUND)
+ELSE
+	FAIL_COUNT += 1
+	PRINTFORML [FAIL] T1: CHKDATA(5) 预期 1，实际 {CHK_RESULT}
+ENDIF
+
+; --- 写入特征值到各变量 ---
+PRINTL
+PRINTL 正在写入特征值到变量……
+
+; CFLAG 特征值
+CFLAG:TARGET:好感度 = 42
+CFLAG:TARGET:信頼 = 77
+CFLAG:TARGET:恐怖度 = 13
+CFLAG:TARGET:AI回写次数 = 999
+
+; CSTR 特征值（这是踩坑的变量之一）
+CSTR:TARGET:0 = 自检近况标记
+CSTR:TARGET:1 = 存档测试台词ABC
+CSTR:TARGET:2 = AI备注_SAVE_TEST
+
+; TSTR 特征值（另一个踩坑变量）
+TSTR:0 = TSTR自检标记_SLOT5
+TSTR:1 = TSTR第二条_验证
+
+; TALENT 特征值
+TALENT:TARGET:傲慢 = 1
+TALENT:TARGET:素直 = 1
+
+; MARK 特征值
+MARK:TARGET:従順 = 7
+
+; 全局标记：用于 B 阶段识别
+FLAG:已初始化 = 777
+
+; BASE 特征值
+BASE:TARGET:0 = 33
+BASE:TARGET:1 = 55
+
+; FLAG 计数器特征值
+FLAG:AI交谈总次数 = 12345
+FLAG:当前日 = 88
+
+PRINTL 特征值已写入。
+
+; --- 测试 2: 执行 SAVEDATA ---
+PRINTL
+PRINTL 正在保存到槽位 5……
+SAVEDATA 5, "自检存档 好感42 信頼77"
+
+; --- 测试 3: CHKDATA 验证存档可读 ---
+CHK_RESULT = CHKDATA(5)
+IF CHK_RESULT == 0
+	PASS_COUNT += 1
+	PRINTL [PASS] T2: SAVEDATA 5 成功，CHKDATA == 0
+ELSE
+	FAIL_COUNT += 1
+	PRINTFORML [FAIL] T2: SAVEDATA 后 CHKDATA(5) == {CHK_RESULT}，预期 0
+ENDIF
+
+; --- 测试 4: RESULTS 包含摘要文本 ---
+IF STRFIND(RESULTS, "自检存档") >= 0
+	PASS_COUNT += 1
+	PRINTL [PASS] T3: RESULTS 包含存档摘要文本
+ELSE
+	FAIL_COUNT += 1
+	PRINTFORML [FAIL] T3: RESULTS 不含摘要。实际：%RESULTS%
+ENDIF
+
+; --- 测试 5: DELDATA 再删除 ---
+DELDATA 5
+CHK_RESULT = CHKDATA(5)
+IF CHK_RESULT == 1
+	PASS_COUNT += 1
+	PRINTL [PASS] T4: DELDATA 后 CHKDATA == 1
+ELSE
+	FAIL_COUNT += 1
+	PRINTFORML [FAIL] T4: DELDATA 后 CHKDATA == {CHK_RESULT}，预期 1
+ENDIF
+
+; --- 测试 6: 再次 SAVEDATA 为 B 阶段准备 ---
+SAVEDATA 5, "自检存档 好感42 信頼77"
+CHK_RESULT = CHKDATA(5)
+IF CHK_RESULT == 0
+	PASS_COUNT += 1
+	PRINTL [PASS] T5: 第二次 SAVEDATA 成功
+ELSE
+	FAIL_COUNT += 1
+	PRINTFORML [FAIL] T5: 第二次 SAVEDATA 失败，CHKDATA == {CHK_RESULT}
+ENDIF
+
+; --- 阶段 A 结果汇总 ---
+PRINTL
+DRAWLINE
+PRINTFORML 阶段 A 完成：PASS={PASS_COUNT}  FAIL={FAIL_COUNT}
+DRAWLINE
+
+IF FAIL_COUNT > 0
+	PRINTL 阶段 A 有失败项，请先修复再继续。
+	PRINTL 输入任意键返回主菜单。
+	WAIT
+	RETURN
+ENDIF
+
+PRINTL
+PRINTL 阶段 A 全部通过。
+PRINTL 接下来执行 LOADDATA 5 进入阶段 B（变量校验）。
+PRINTL LOADDATA 后流程会走 @EVENTLOAD，届时自动校验特征值。
+PRINTL
+PRINTL [1] 继续执行 LOADDATA（推荐）
+PRINTL [0] 返回主菜单（跳过阶段 B）
+INPUT
+
+IF RESULT == 1
+	LOADDATA 5
+ENDIF
+
+;---------------------------------------------------------------
+; 存档自检阶段 B（读档后变量校验）
+; 由 @EVENTLOAD 检测 FLAG:已初始化 == 777 时自动调用
+;---------------------------------------------------------------
+@SAVE_SELFTEST_PHASE_B
+#DIM B_PASS
+#DIM B_FAIL
+
+B_PASS = 0
+B_FAIL = 0
+
+PRINTL
+DRAWLINE
+PRINTL 存档功能自检 —— 阶段 B（读档后变量校验）
+DRAWLINE
+PRINTL
+
+; --- CFLAG 校验 ---
+IF CFLAG:TARGET:好感度 == 42
+	B_PASS += 1
+	PRINTL [PASS] B1: CFLAG:好感度 == 42
+ELSE
+	B_FAIL += 1
+	PRINTFORML [FAIL] B1: CFLAG:好感度 预期 42，实际 {CFLAG:TARGET:好感度}
+ENDIF
+
+IF CFLAG:TARGET:信頼 == 77
+	B_PASS += 1
+	PRINTL [PASS] B2: CFLAG:信頼 == 77
+ELSE
+	B_FAIL += 1
+	PRINTFORML [FAIL] B2: CFLAG:信頼 预期 77，实际 {CFLAG:TARGET:信頼}
+ENDIF
+
+IF CFLAG:TARGET:恐怖度 == 13
+	B_PASS += 1
+	PRINTL [PASS] B3: CFLAG:恐怖度 == 13
+ELSE
+	B_FAIL += 1
+	PRINTFORML [FAIL] B3: CFLAG:恐怖度 预期 13，实际 {CFLAG:TARGET:恐怖度}
+ENDIF
+
+IF CFLAG:TARGET:AI回写次数 == 999
+	B_PASS += 1
+	PRINTL [PASS] B4: CFLAG:AI回写次数 == 999
+ELSE
+	B_FAIL += 1
+	PRINTFORML [FAIL] B4: CFLAG:AI回写次数 预期 999，实际 {CFLAG:TARGET:AI回写次数}
+ENDIF
+
+; --- CSTR 校验（踩坑变量） ---
+IF CSTR:TARGET:0 == "自检近况标记"
+	B_PASS += 1
+	PRINTL [PASS] B5: CSTR:0 == 自检近况标记
+ELSE
+	B_FAIL += 1
+	PRINTFORML [FAIL] B5: CSTR:0 预期「自检近况标记」，实际「%CSTR:TARGET:0%」
+ENDIF
+
+IF CSTR:TARGET:1 == "存档测试台词ABC"
+	B_PASS += 1
+	PRINTL [PASS] B6: CSTR:1 == 存档测试台词ABC
+ELSE
+	B_FAIL += 1
+	PRINTFORML [FAIL] B6: CSTR:1 预期「存档测试台词ABC」，实际「%CSTR:TARGET:1%」
+ENDIF
+
+IF CSTR:TARGET:2 == "AI备注_SAVE_TEST"
+	B_PASS += 1
+	PRINTL [PASS] B7: CSTR:2 == AI备注_SAVE_TEST
+ELSE
+	B_FAIL += 1
+	PRINTFORML [FAIL] B7: CSTR:2 预期「AI备注_SAVE_TEST」，实际「%CSTR:TARGET:2%」
+ENDIF
+
+; --- TSTR 校验（另一个踩坑变量） ---
+IF TSTR:0 == "TSTR自检标记_SLOT5"
+	B_PASS += 1
+	PRINTL [PASS] B8: TSTR:0 == TSTR自检标记_SLOT5
+ELSE
+	B_FAIL += 1
+	PRINTFORML [FAIL] B8: TSTR:0 预期「TSTR自检标记_SLOT5」，实际「%TSTR:0%」
+ENDIF
+
+IF TSTR:1 == "TSTR第二条_验证"
+	B_PASS += 1
+	PRINTL [PASS] B9: TSTR:1 == TSTR第二条_验证
+ELSE
+	B_FAIL += 1
+	PRINTFORML [FAIL] B9: TSTR:1 预期「TSTR第二条_验证」，实际「%TSTR:1%」
+ENDIF
+
+; --- TALENT 校验 ---
+IF TALENT:TARGET:傲慢 == 1
+	B_PASS += 1
+	PRINTL [PASS] B10: TALENT:傲慢 == 1
+ELSE
+	B_FAIL += 1
+	PRINTFORML [FAIL] B10: TALENT:傲慢 预期 1，实际 {TALENT:TARGET:傲慢}
+ENDIF
+
+IF TALENT:TARGET:素直 == 1
+	B_PASS += 1
+	PRINTL [PASS] B11: TALENT:素直 == 1
+ELSE
+	B_FAIL += 1
+	PRINTFORML [FAIL] B11: TALENT:素直 预期 1，实际 {TALENT:TARGET:素直}
+ENDIF
+
+; --- MARK 校验 ---
+IF MARK:TARGET:従順 == 7
+	B_PASS += 1
+	PRINTL [PASS] B12: MARK:従順 == 7
+ELSE
+	B_FAIL += 1
+	PRINTFORML [FAIL] B12: MARK:従順 预期 7，实际 {MARK:TARGET:従順}
+ENDIF
+
+; --- BASE 校验 ---
+IF BASE:TARGET:0 == 33
+	B_PASS += 1
+	PRINTL [PASS] B13: BASE:0 == 33
+ELSE
+	B_FAIL += 1
+	PRINTFORML [FAIL] B13: BASE:0 预期 33，实际 {BASE:TARGET:0}
+ENDIF
+
+IF BASE:TARGET:1 == 55
+	B_PASS += 1
+	PRINTL [PASS] B14: BASE:1 == 55
+ELSE
+	B_FAIL += 1
+	PRINTFORML [FAIL] B14: BASE:1 预期 55，实际 {BASE:TARGET:1}
+ENDIF
+
+; --- FLAG 全局校验 ---
+IF FLAG:AI交谈总次数 == 12345
+	B_PASS += 1
+	PRINTL [PASS] B15: FLAG:AI交谈总次数 == 12345
+ELSE
+	B_FAIL += 1
+	PRINTFORML [FAIL] B15: FLAG:AI交谈总次数 预期 12345，实际 {FLAG:AI交谈总次数}
+ENDIF
+
+IF FLAG:当前日 == 88
+	B_PASS += 1
+	PRINTL [PASS] B16: FLAG:当前日 == 88
+ELSE
+	B_FAIL += 1
+	PRINTFORML [FAIL] B16: FLAG:当前日 预期 88，实际 {FLAG:当前日}
+ENDIF
+
+; --- 阶段 B 汇总 ---
+PRINTL
+DRAWLINE
+PRINTFORML 阶段 B 完成：PASS={B_PASS}  FAIL={B_FAIL}
+DRAWLINE
+
+IF B_FAIL == 0
+	PRINTL 存档自检全部通过！存档功能正常工作。
+ELSE
+	PRINTL 存档自检有失败项。CSTR/TSTR 失败通常表示 ExtSaveList 分桶 bug 未修复。
+ENDIF
+
+; 清除自检标记
+FLAG:已初始化 = 1
+
+; 清理测试存档
+DELDATA 5
+PRINTL 已清理测试存档（槽位 5）。
+PRINTL

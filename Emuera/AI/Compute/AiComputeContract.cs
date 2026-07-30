@@ -137,6 +137,25 @@ internal sealed class AiComputeResult
 
     /// <summary>原始 JSON，写进日志便于复盘。</summary>
     public string RawJson;
+
+    /// <summary>
+    /// P4：模型建议的玩家选项。纯 UI 建议，点了只是把文本填进输入框，不写存档也不推进流程。
+    /// 因此它的校验取向与 changes 相反——坏的单条丢弃，不整批拒绝。
+    /// </summary>
+    public List<Interact.AiOption> Options = [];
+
+    /// <summary>
+    /// P4：模型提出的交互指令（推进流程）。为 null 或 kind=none 表示本轮不推进。
+    /// 与 changes 分开是必须的：数值写错能撤销，流程被推进无法撤销，两者的处置策略不同。
+    /// </summary>
+    public Interact.AiActionRequest Action;
+
+    /// <summary>
+    /// P4：解析交互部分时被丢弃的东西。非空表示模型给了交互内容但我们没采用。
+    /// 必须记下来并显示出来——否则"模型没提建议"和"提了但被我们丢了"从界面上无法区分，
+    /// 而这两种情况的排查方向完全不同（一个改 prompt，一个改校验或契约）。
+    /// </summary>
+    public string InteractNote;
 }
 
 /// <summary>

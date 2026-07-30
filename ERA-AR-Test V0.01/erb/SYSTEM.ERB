@@ -1,0 +1,284 @@
+﻿;===============================================================
+; SYSTEM.ERB —— 系统流程
+;
+; 这一份是 ERA-AI 联调环境的骨架，结构参照 伪eramaou_EX 的 TITLE.ERB，
+; 但把所有与 AI 无关的内容（立绘、迷宫、卖春、口上）全部剥掉。
+;
+; 引擎调用顺序（Process.SystemProc.cs）：
+;   启动 → @SYSTEM_TITLE
+;   BEGIN FIRST    → @EVENTFIRST
+;   BEGIN SHOP     → @EVENTSHOP → @SHOW_SHOP → 等输入
+;                    输入 < 販売アイテム数(100) 且在售 → 买道具 → @EVENTBUY
+;                    否则 → @USERSHOP（原值在 RESULT 里）
+;   BEGIN TRAIN    → 见 TRAIN.ERB
+;   BEGIN TURNEND  → @EVENTTURNEND
+;
+; 两条硬约束：
+;   1. 菜单编号一律 >= 100。小于 100 的输入被引擎当成"买第 n 号道具"，
+;      根本走不到 @USERSHOP，表现为"点了菜单没反应"。
+;   2. @EVENTFIRST 里必须把 TARGET 设成合法登录号。TARGET < 0 时
+;      AiPromptBuilder.BuildForCurrentTarget 直接退回静态 prompt，
+;      词条系统整套测不到。
+;===============================================================
+
+;---------------------------------------------------------------
+; 标题画面
+;---------------------------------------------------------------
+@SYSTEM_TITLE
+LOADGLOBAL
+ALIGNMENT LEFT
+DRAWLINE
+PRINTL 　ERA-AI 联调测试环境
+PRINTFORML 　%GAMEBASE_TITLE%　Ver{GAMEBASE_VERSION}
+DRAWLINE
+PRINTL
+PRINTL 　用途：验证 AI 模块 P0-P6 在真实 ERA 数据结构上的运行链路。
+PRINTL 　CSV 与角色数据取自「伪eramaou_EX 0.93立绘版V2 2024年度版」裁剪。
+PRINTL
+PRINTL 　AI 相关操作全部在菜单栏「AI」下拉菜单里。
+PRINTL 　没有 API 密钥时，用「AI → 发起测试请求(P0 假数据)」即可跑通整条调度链。
+DRAWLINE
+PRINTL
+PRINTL [100] 新的开始
+PRINTL [101] 读取存档
+PRINTL [199] 退出
+PRINTL
+
+; 这里故意用带超时的 TINPUT 而不是裸 INPUT。
+; 理由是 P0 自检（ERA_AI_SELFTEST=1）会在脚本第一次进入输入等待时开跑，
+; 其中 B 组有一条前置断言要求「限时输入计时器确实在运行」——
+; 裸 INPUT 不启动计时器，那条断言必然 FAIL，而且后面「取锁时暂停计时器」
+; 会因为计时器本来就没跑而侥幸通过，等于白测。
+; 参数：600000ms 超时，超时后取默认值 100（新的开始），第三参 0 = 不显示倒计时。
+TINPUT 600000, 100, 0
+
+SELECTCASE RESULT
+	CASE 100
+		CALL NEW_GAME
+	CASE 101
+		LOADGAME
+	CASE 199
+		QUIT
+	CASEELSE
+		PRINTL 无效输入。
+		RESTART
+ENDSELECT
+
+;---------------------------------------------------------------
+; 新游戏初始化
+;
+; ADDCHARA 的参数是 Chara*.csv 的「番号」，登录后在 CharacterList 里的
+; 下标才是 TARGET 用的登录号。这里按 0..6 顺序登录，于是
+;   登录号 == 番号
+; 这个对应关系成立，排查问题时不用来回换算。
+; 一旦中途 DELCHARA，这个巧合就会失效——所以本环境不提供删除角色。
+;---------------------------------------------------------------
+@NEW_GAME
+RESETDATA
+ADDCHARA 0
+ADDCHARA 1
+ADDCHARA 2
+ADDCHARA 3
+ADDCHARA 4
+ADDCHARA 5
+ADDCHARA 6
+
+DAY:0 = 1
+FLAG:当前日 = 1
+FLAG:已初始化 = 1
+MONEY:0 = 50000
+
+; 全部道具上架，让 SHOP 分支可测
+ITEMSALES:0 = 1
+ITEMSALES:1 = 1
+ITEMSALES:2 = 1
+ITEMSALES:3 = 1
+ITEM:0 = 1
+ITEM:1 = 3
+
+BEGIN FIRST
+
+;---------------------------------------------------------------
+; 开局事件
+;---------------------------------------------------------------
+@EVENTFIRST
+; 关键：TARGET 指向 1 号（莉莉娅，傲娇型）。
+TARGET:0 = 1
+
+PRINTL
+DRAWLINE
+PRINTFORML 已登录 {CHARANUM} 名角色，当前对话对象设为 %NAME:TARGET%。
+DRAWLINE
+PRINTL
+PRINTL 各角色的设计意图（详见 csv\Chara\Chara*.csv 的头部注释）：
+PRINTL 　0 你　　　主角，不作为 AI 描写对象
+PRINTL 　1 莉莉娅　傲娇型　　　→ 预期命中 tsundere
+PRINTL 　2 梅雅　　傲慢+素直　 → 预期 tsundere 与 honest 硬冲突，tsundere 胜
+PRINTL 　3 茜　　　低好感　　　→ 预期命中 cold
+PRINTL 　4 缇娜　　好感 92　　 → tsundere 被 modifier 抑制，预期 clingy
+PRINTL 　5 诺艾儿　従順 4　　　→ cold 被 modifier 抑制，预期只剩 baseline
+PRINTL 　6 艾莎　　体力 15　　 → 预期命中 honest + clingy + exhausted（多条排序）
+PRINTL
+PRINTL 建议的验证顺序：
+PRINTL 　[106] 词条命中预期自检 → 对全部角色跑一遍本地推演
+PRINTL 　AI → 预览当前角色 prompt → 对照推演结果看实际装配
+PRINTL 　[104] 进入调教 → 选「交谈」→ 在 AI 面板发请求
+PRINTL 　[109] 真实 API 往返检查清单 → 确认走的是网络请求而不是假数据
+PRINTL
+PRINTL 注意：[105] 场景预设会「持久」改写角色数值，且不会自动复原。
+PRINTL 　　　想回到上面这份设计初值，重新执行 [198] 回到标题 → [100] 新的开始。
+PRINTL
+BEGIN SHOP
+
+;---------------------------------------------------------------
+; 主菜单
+;
+; 引擎在 @SHOW_SHOP 返回后自动进入数值输入等待，
+; 这里绝对不能自己写 INPUT，否则会多吃一次输入。
+;---------------------------------------------------------------
+@SHOW_SHOP
+DRAWLINE
+PRINTFORM 　第 {DAY:0} 天　所持金 {MONEY:0} G
+PRINTFORML 　　当前对象：%NAME:TARGET%（登录号 {TARGET:0} / 番号 {NO:TARGET}）
+PRINTFORML 　好感度 {CFLAG:TARGET:好感度}　信頼 {CFLAG:TARGET:信頼}　体力 {BASE:TARGET:0}/{MAXBASE:TARGET:0}
+DRAWLINE
+PRINTL
+PRINTL 　==== AI 联调 ====
+PRINTL 　[100] 当前对象详细状态（含词条命中推演）
+PRINTL 　[101] 切换对话对象
+PRINTL 　[102] 全部角色一览
+PRINTL 　[103] 手动改数值（验证变量读写链路）
+PRINTL 　[104] 进入调教流程（AI 交谈挂钩点）
+PRINTL 　[105] 场景预设（一键摆好某条词条的命中条件）
+PRINTL 　[106] 词条命中预期自检（全部角色）
+PRINTL 　[107] 输入注入测试（P4 交互控制用）
+PRINTL 　[108] 打印 AI 联调计数器
+PRINTL 　[109] 真实 API 往返检查清单（推演 vs 实际的对照方法）
+PRINTL
+PRINTL 　==== 常规 ====
+PRINTL 　[110] 推进一天　[120] 保存　[121] 读取　[122] 删除存档
+PRINTL 　[130] 存档自检（验证存/读/删功能）
+PRINTL 　[198] 回到标题　[199] 退出
+PRINTL
+PRINTL 　==== 送礼（验证 SHOP 分支与 @EVENTBUY） ====
+PRINTFORML 　[0] %ITEMNAME:0% {ITEMPRICE:0}G　[1] %ITEMNAME:1% {ITEMPRICE:1}G
+PRINTFORML 　[2] %ITEMNAME:2% {ITEMPRICE:2}G　[3] %ITEMNAME:3% {ITEMPRICE:3}G
+PRINTL
+PRINTL 请输入编号：
+
+;---------------------------------------------------------------
+; 菜单分发。RESULT >= 100（或未在售的道具号）时引擎转交到这里
+;---------------------------------------------------------------
+@USERSHOP
+SELECTCASE RESULT
+	CASE 100
+		CALL SHOW_TARGET_DETAIL
+	CASE 101
+		CALL SELECT_TARGET
+	CASE 102
+		CALL SHOW_ALL_CHARA
+	CASE 103
+		CALL MANUAL_EDIT
+	CASE 104
+		BEGIN TRAIN
+	CASE 105
+		CALL AI_SCENE_PRESET
+	CASE 106
+		CALL AI_EXPECT_SELFCHECK
+	CASE 107
+		CALL AI_INJECT_TEST
+	CASE 108
+		CALL AI_SHOW_COUNTERS
+	CASE 109
+		CALL AI_REAL_API_GUIDE
+	CASE 110
+		BEGIN TURNEND
+	CASE 120
+		CALL SYSTEM_SAVEGAME
+	CASE 121
+		CALL SYSTEM_LOADGAME
+	CASE 122
+		CALL SYSTEM_DELGAME
+	CASE 130
+		CALL SAVE_SELFTEST
+	CASE 198
+		BEGIN TITLE
+	CASE 199
+		QUIT
+	CASEELSE
+		PRINTL 无效编号。
+ENDSELECT
+
+;---------------------------------------------------------------
+; 买到道具时引擎调用。
+; 这里的加好感是"ERB 侧的正常涨幅"，用来和 AI 副 API 的回写做对照：
+; 两者写的是同一个 CFLAG:好感度，如果 ERB 能写、AI 不能写，
+; 问题就在 ai_traits.json 的 target 或字段名上，不在变量层。
+;---------------------------------------------------------------
+@EVENTBUY
+PRINTL
+PRINTFORML 购买了「%ITEMNAME:BOUGHT%」，剩余 {MONEY:0} G。
+SELECTCASE BOUGHT
+	CASE 3
+		BASE:TARGET:0 += 30
+		SIF BASE:TARGET:0 > MAXBASE:TARGET:0
+			BASE:TARGET:0 = MAXBASE:TARGET:0
+		PRINTFORML %NAME:TARGET% 的体力恢复到 {BASE:TARGET:0}。
+	CASEELSE
+		CFLAG:TARGET:好感度 += 3
+		CFLAG:TARGET:亲密度 += 1
+		PRINTFORML %NAME:TARGET% 的好感度 +3，现在是 {CFLAG:TARGET:好感度}。
+ENDSELECT
+PRINTL
+
+;---------------------------------------------------------------
+; 存档摘要
+;---------------------------------------------------------------
+@SAVEINFO
+PUTFORM 第 {DAY:0} 天／对象 %NAME:TARGET%／好感 {CFLAG:TARGET:好感度}／AI交谈 {FLAG:AI交谈总次数} 次
+
+;---------------------------------------------------------------
+; 读档后。TARGET 是存档里带出来的，但仍要防一手：
+; 老存档可能是 TARGET 还没被设过的版本，那样词条系统会整套失效。
+;---------------------------------------------------------------
+@EVENTLOAD
+PRINTL
+PRINTL 存档已载入。
+IF TARGET:0 < 0 || TARGET:0 >= CHARANUM
+	TARGET:0 = 1
+	PRINTL 存档里的 TARGET 不合法，已重置为 1 号。
+ENDIF
+; 存档自检阶段 B 调度
+IF FLAG:已初始化 == 777
+	CALL SAVE_SELFTEST_PHASE_B
+ENDIF
+
+PRINTFORML 当前对象：%NAME:TARGET%（登录号 {TARGET:0}）
+
+;---------------------------------------------------------------
+; 推进一天（BEGIN TURNEND 的落点）
+;---------------------------------------------------------------
+@EVENTTURNEND
+CALL NEXT_DAY
+BEGIN SHOP
+
+;---------------------------------------------------------------
+; 推进一天的本体。也被 TRAIN 流程复用
+;
+; 体力恢复到 MAXBASE 而不是固定值：Chara6（艾莎）的 MAXBASE:0 只有 15，
+; 恢复后仍在 exhausted 词条的区间内，方便反复复现状态类词条。
+;---------------------------------------------------------------
+@NEXT_DAY
+DAY:0 += 1
+FLAG:当前日 = DAY:0
+PRINTL
+DRAWLINE
+PRINTFORML 第 {DAY:0} 天开始了。
+FOR LOCAL, 0, CHARANUM
+	BASE:LOCAL:0 = MAXBASE:LOCAL:0
+	BASE:LOCAL:1 = MAXBASE:LOCAL:1
+	CFLAG:LOCAL:今日已交谈 = 0
+NEXT
+PRINTL 全体体力与气力已恢复至上限。
+DRAWLINE
+PRINTL

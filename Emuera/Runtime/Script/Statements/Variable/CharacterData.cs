@@ -439,25 +439,25 @@ internal sealed class CharacterData : IDisposable
 		List<VariableCode> codeList;
 
 		//dataString
-		codeList = VariableIdentifier.GetExtSaveList(VariableKind.String, VariableDimension.Scalar);
+		codeList = VariableIdentifier.GetExtSaveList(VariableKind.String, VariableDimension.Scalar, true);
 		foreach (VariableCode code in codeList)
 			writer.WriteExtended(code.ToString(), dataString[(int)VariableCode.__LOWERCASE__ & (int)code]);
 		writer.EmuSeparete();
 
 		//datainteger
-		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Integer, VariableDimension.Scalar);
+		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Integer, VariableDimension.Scalar, true);
 		foreach (VariableCode code in codeList)
 			writer.WriteExtended(code.ToString(), dataInteger[(int)VariableCode.__LOWERCASE__ & (int)code]);
 		writer.EmuSeparete();
 
 		//dataFloat
-		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Float, VariableDimension.Scalar);
+		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Float, VariableDimension.Scalar, true);
 		foreach (VariableCode code in codeList)
 			writer.WriteExtended(code.ToString(), dataFloat[(int)VariableCode.__LOWERCASE__ & (int)code]);
 		writer.EmuSeparete();
 
 		//dataStringArray
-		codeList = VariableIdentifier.GetExtSaveList(VariableKind.String, VariableDimension.Array1D);
+		codeList = VariableIdentifier.GetExtSaveList(VariableKind.String, VariableDimension.Array1D, true);
 		foreach (VariableCode code in codeList)
 		{
 			int idx = (int)VariableCode.__LOWERCASE__ & (int)code;
@@ -466,7 +466,7 @@ internal sealed class CharacterData : IDisposable
 		writer.EmuSeparete();
 
 		//dataIntegerArray
-		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Integer, VariableDimension.Array1D);
+		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Integer, VariableDimension.Array1D, true);
 		foreach (VariableCode code in codeList)
 		{
 			int idx = (int)VariableCode.__LOWERCASE__ & (int)code;
@@ -475,7 +475,7 @@ internal sealed class CharacterData : IDisposable
 		writer.EmuSeparete();
 
 		//dataFloatArray
-		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Float, VariableDimension.Array1D);
+		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Float, VariableDimension.Array1D, true);
 		foreach (VariableCode code in codeList)
 		{
 			int idx = (int)VariableCode.__LOWERCASE__ & (int)code;
@@ -484,19 +484,19 @@ internal sealed class CharacterData : IDisposable
 		writer.EmuSeparete();
 
 		//dataStringArray2D
-		codeList = VariableIdentifier.GetExtSaveList(VariableKind.String, VariableDimension.Array2D);
+		codeList = VariableIdentifier.GetExtSaveList(VariableKind.String, VariableDimension.Array2D, true);
 		foreach (VariableCode code in codeList)
 			writer.WriteExtended(code.ToString(), dataStringArray2D[(int)VariableCode.__LOWERCASE__ & (int)code]);
 		writer.EmuSeparete();
 
 		//dataIntegerArray2D
-		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Integer, VariableDimension.Array2D);
+		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Integer, VariableDimension.Array2D, true);
 		foreach (VariableCode code in codeList)
 			writer.WriteExtended(code.ToString(), dataIntegerArray2D[(int)VariableCode.__LOWERCASE__ & (int)code]);
 		writer.EmuSeparete();
 
 		//dataFloatArray2D
-		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Float, VariableDimension.Array2D);
+		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Float, VariableDimension.Array2D, true);
 		foreach (VariableCode code in codeList)
 			writer.WriteExtended(code.ToString(), dataFloatArray2D[(int)VariableCode.__LOWERCASE__ & (int)code]);
 		writer.EmuSeparete();
@@ -516,51 +516,51 @@ internal sealed class CharacterData : IDisposable
 
 		List<VariableCode> codeList;
 
-		codeList = VariableIdentifier.GetExtSaveList(VariableKind.String, VariableDimension.Scalar);
+		codeList = VariableIdentifier.GetExtSaveList(VariableKind.String, VariableDimension.Scalar, true);
 		foreach (VariableCode code in codeList)
 			if (strDic.ContainsKey(code.ToString()))
 				dataString[(int)VariableCode.__LOWERCASE__ & (int)code] = strDic[code.ToString()];
 
-		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Integer, VariableDimension.Scalar);
+		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Integer, VariableDimension.Scalar, true);
 		foreach (VariableCode code in codeList)
 			if (intDic.ContainsKey(code.ToString()))
 				dataInteger[(int)VariableCode.__LOWERCASE__ & (int)code] = intDic[code.ToString()];
 
-		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Float, VariableDimension.Scalar);
+		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Float, VariableDimension.Scalar, true);
 		foreach (VariableCode code in codeList)
 			if (floatDic.ContainsKey(code.ToString()))
 				dataFloat[(int)VariableCode.__LOWERCASE__ & (int)code] = floatDic[code.ToString()];
 
 
-		codeList = VariableIdentifier.GetExtSaveList(VariableKind.String, VariableDimension.Array1D);
+		codeList = VariableIdentifier.GetExtSaveList(VariableKind.String, VariableDimension.Array1D, true);
 		foreach (VariableCode code in codeList)
 			if (strListDic.ContainsKey(code.ToString()))
 				copyListToSparseArray(strListDic[code.ToString()], dataStringArray[(int)VariableCode.__LOWERCASE__ & (int)code]);
 
-		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Integer, VariableDimension.Array1D);
+		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Integer, VariableDimension.Array1D, true);
 		foreach (VariableCode code in codeList)
 			if (intListDic.ContainsKey(code.ToString()))
 				copyListToSparseArray(intListDic[code.ToString()], dataIntegerArray[(int)VariableCode.__LOWERCASE__ & (int)code]);
 
-		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Float, VariableDimension.Array1D);
+		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Float, VariableDimension.Array1D, true);
 		foreach (VariableCode code in codeList)
 			if (floatListDic.ContainsKey(code.ToString()))
 				copyListToSparseArray(floatListDic[code.ToString()], dataFloatArray[(int)VariableCode.__LOWERCASE__ & (int)code]);
 
 		//dataStringArray2D
-		codeList = VariableIdentifier.GetExtSaveList(VariableKind.String, VariableDimension.Array2D);
+		codeList = VariableIdentifier.GetExtSaveList(VariableKind.String, VariableDimension.Array2D, true);
 		foreach (VariableCode code in codeList)
-			if (int2DListDic.ContainsKey(code.ToString()))
+			if (str2DListDic.ContainsKey(code.ToString()))
 				copyListToArray2D(str2DListDic[code.ToString()], dataStringArray2D[(int)VariableCode.__LOWERCASE__ & (int)code]);
 
 		//dataIntegerArray2D
-		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Integer, VariableDimension.Array2D);
+		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Integer, VariableDimension.Array2D, true);
 		foreach (VariableCode code in codeList)
 			if (int2DListDic.ContainsKey(code.ToString()))
 				copyListToArray2D(int2DListDic[code.ToString()], dataIntegerArray2D[(int)VariableCode.__LOWERCASE__ & (int)code]);
 
 		//dataFloatArray2D
-		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Float, VariableDimension.Array2D);
+		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Float, VariableDimension.Array2D, true);
 		foreach (VariableCode code in codeList)
 			if (float2DListDic.ContainsKey(code.ToString()))
 				copyListToArray2D(float2DListDic[code.ToString()], dataFloatArray2D[(int)VariableCode.__LOWERCASE__ & (int)code]);
@@ -575,23 +575,23 @@ internal sealed class CharacterData : IDisposable
 
 		List<VariableCode> codeList;
 
-		codeList = VariableIdentifier.GetExtSaveList(VariableKind.String, VariableDimension.Scalar);
+		codeList = VariableIdentifier.GetExtSaveList(VariableKind.String, VariableDimension.Scalar, true);
 		foreach (VariableCode code in codeList)
 			if (strDic.ContainsKey(code.ToString()))
 				dataString[(int)VariableCode.__LOWERCASE__ & (int)code] = strDic[code.ToString()];
 
-		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Integer, VariableDimension.Scalar);
+		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Integer, VariableDimension.Scalar, true);
 		foreach (VariableCode code in codeList)
 			if (intDic.ContainsKey(code.ToString()))
 				dataInteger[(int)VariableCode.__LOWERCASE__ & (int)code] = intDic[code.ToString()];
 
 
-		codeList = VariableIdentifier.GetExtSaveList(VariableKind.String, VariableDimension.Array1D);
+		codeList = VariableIdentifier.GetExtSaveList(VariableKind.String, VariableDimension.Array1D, true);
 		foreach (VariableCode code in codeList)
 			if (strListDic.ContainsKey(code.ToString()))
 				copyListToSparseArray(strListDic[code.ToString()], dataStringArray[(int)VariableCode.__LOWERCASE__ & (int)code]);
 
-		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Integer, VariableDimension.Array1D);
+		codeList = VariableIdentifier.GetExtSaveList(VariableKind.Integer, VariableDimension.Array1D, true);
 		foreach (VariableCode code in codeList)
 			if (intListDic.ContainsKey(code.ToString()))
 				copyListToSparseArray(intListDic[code.ToString()], dataIntegerArray[(int)VariableCode.__LOWERCASE__ & (int)code]);

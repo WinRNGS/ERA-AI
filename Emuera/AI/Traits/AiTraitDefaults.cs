@@ -1,4 +1,4 @@
-﻿namespace MinorShift.Emuera.AI.Traits;
+namespace MinorShift.Emuera.AI.Traits;
 
 /// <summary>
 /// 内置默认词条库。仅在 exe 同目录与 csv 目录都找不到 ai_traits.json 时写出一份，
@@ -7,7 +7,12 @@
 /// 这份默认库的作用是"可运行的示例"，覆盖了全部语法特性：
 ///   硬冲突（傲娇 × 坦率）、软冲突（傲娇 × 冷淡）、条件冲突（好感度高时冷淡失效）、
 ///   always 全局词条、状态类词条、prompt 骨架与数值状态字段，
-///   以及 P3 的 compute 段（副 API 可写字段、幅度上限、额外状态项）。
+///   P3 的 compute 段（副 API 可写字段、幅度上限、额外状态项），
+///   以及 P4 的 interact 段（命令白名单、选项上限、自由注入开关）。
+///
+/// interact.allowed_commands 里的 value 是**示例值**，几乎肯定与你的游戏不符。
+/// 填错不会报错——引擎会把它当成一个正常的输入提交上去，于是流程推进到别的地方。
+/// 换游戏第一件事是跑「预览交互契约」核对这些编号。
 /// </summary>
 internal static class AiTraitDefaults
 {
@@ -106,6 +111,42 @@ internal static class AiTraitDefaults
                 "note": "全局字段，target 里不含 {CHARA}，副 API 提交时 chara_no 填 -1"
               }
             ]
+          },
+          "interact": {
+            "enabled": true,
+            "auto_execute": false,
+            "max_options": 4,
+            "option_max_chars": 24,
+            "allow_input_injection": false,
+            "input_int_range": [],
+            "input_str_max_chars": 0,
+            "allowed_commands": [
+              {
+                "command": "结束本回合",
+                "value": 0,
+                "description": "结束当前调教/交谈回合，回到指令选择",
+                "note": "COM 编号随游戏而异。换游戏第一件事是核对这些 value 与实际的指令编号是否对得上——填错不会报错，只会推进到别的地方去"
+              },
+              {
+                "command": "抚摸头部",
+                "value": 1,
+                "description": "轻抚对方的头，安抚性质的接触",
+                "note": "示例值。value 是提交给引擎的 COM 编号，模型只看得到 command 名，看不到这个数字"
+              },
+              {
+                "command": "交谈",
+                "value": 2,
+                "description": "与对方说话，推进对话",
+                "note": "示例值，请按实际游戏的 COM 编号改"
+              }
+            ]
+          },
+          "context": {
+            "context_window": 8192,
+            "retain_rounds": 3,
+            "trigger_ratio": 0.80,
+            "target_ratio": 0.50,
+            "enabled": true
           },
           "traits": [
             {

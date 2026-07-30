@@ -136,7 +136,7 @@ internal sealed class VariableIdentifier
 
 	readonly static Dictionary<string, VariableCode> nameDic = [];
 	readonly static Dictionary<string, VariableCode> localvarNameDic = [];
-	readonly static Dictionary<(VariableKind, VariableDimension), List<VariableCode>> extSaveListDic = [];
+	readonly static Dictionary<(VariableKind, VariableDimension, bool), List<VariableCode>> extSaveListDic = [];
 
 	static VariableIdentifier()
 	{
@@ -194,7 +194,7 @@ internal sealed class VariableIdentifier
 			if ((code & VariableCode.__SAVE_EXTENDED__) == VariableCode.__SAVE_EXTENDED__)
 			{
 				var desc = VariableDescriptor.FromCode(code, key);
-				var dicKey = (desc.Kind, desc.Dimension);
+				var dicKey = (desc.Kind, desc.Dimension, desc.Attributes.HasFlag(VariableAttribute.CharacterData));
 				if (!extSaveListDic.ContainsKey(dicKey))
 					extSaveListDic.Add(dicKey, []);
 				extSaveListDic[dicKey].Add(code);
@@ -205,15 +205,20 @@ internal sealed class VariableIdentifier
 	public static List<VariableCode> GetExtSaveList(VariableCode flag)
 	{
 		var desc = VariableDescriptor.FromCode(flag, "");
-		var dicKey = (desc.Kind, desc.Dimension);
+		var dicKey = (desc.Kind, desc.Dimension, desc.Attributes.HasFlag(VariableAttribute.CharacterData));
 		if (!extSaveListDic.TryGetValue(dicKey, out List<VariableCode> value))
 			return [];
 		return value;
 	}
 
-	public static List<VariableCode> GetExtSaveList(VariableKind kind, VariableDimension dim)
+	/// <summary>
+	/// 拡張セーブ対象変数の一覧。
+	/// キャラクタ変数と非キャラクタ変数は格納先の配列が別なので、
+	/// isCharacterDataで区別しなければ添字が食い違いセーブが壊れる。
+	/// </summary>
+	public static List<VariableCode> GetExtSaveList(VariableKind kind, VariableDimension dim, bool isCharacterData)
 	{
-		var dicKey = (kind, dim);
+		var dicKey = (kind, dim, isCharacterData);
 		if (!extSaveListDic.TryGetValue(dicKey, out List<VariableCode> value))
 			return [];
 		return value;

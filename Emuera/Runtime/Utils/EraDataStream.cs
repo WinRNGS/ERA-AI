@@ -162,6 +162,11 @@ internal sealed class EraDataReader : IDisposable
 	#region Emuera
 	int emu_version = -1;
 	public int DataVersion { get { return emu_version; } }
+	/// <summary>
+	/// 拡張セーブ部分が途中で終わっていたか。
+	/// 旧バージョンのバグで壊れたセーブデータを読み込んだ時にtrueになる。
+	/// </summary>
+	public bool ExtendedDataTruncated { get; private set; }
 	public bool SeekEmuStart()
 	{
 
@@ -212,7 +217,10 @@ internal sealed class EraDataReader : IDisposable
 		{
 			str = reader.ReadLine();
 			if (str == null)
-				throw new FileEE(trerror.UnexpectedSaveDataEnd.Text);
+			{
+				ExtendedDataTruncated = true;
+				break;//セーブデータが途中で終わっている場合はここまでを有効なデータとして扱う
+			}
 			if (str.Equals(FINISHER, StringComparison.Ordinal))
 				throw new FileEE(trerror.InvalidSaveDataFormat.Text);
 			if (str.Equals(EMU_SEPARATOR, StringComparison.Ordinal))
@@ -236,7 +244,10 @@ internal sealed class EraDataReader : IDisposable
 		{
 			str = reader.ReadLine();
 			if (str == null)
-				throw new FileEE(trerror.UnexpectedSaveDataEnd.Text);
+			{
+				ExtendedDataTruncated = true;
+				break;//セーブデータが途中で終わっている場合はここまでを有効なデータとして扱う
+			}
 			if (str.Equals(FINISHER, StringComparison.Ordinal))
 				throw new FileEE(trerror.InvalidSaveDataFormat.Text);
 			if (str.Equals(EMU_SEPARATOR, StringComparison.Ordinal))
@@ -263,7 +274,10 @@ internal sealed class EraDataReader : IDisposable
 		{
 			str = reader.ReadLine();
 			if (str == null)
-				throw new FileEE(trerror.UnexpectedSaveDataEnd.Text);
+			{
+				ExtendedDataTruncated = true;
+				break;//セーブデータが途中で終わっている場合はここまでを有効なデータとして扱う
+			}
 			if (str.Equals(FINISHER, StringComparison.Ordinal))
 				throw new FileEE(trerror.InvalidSaveDataFormat.Text);
 			if (str.Equals(EMU_SEPARATOR, StringComparison.Ordinal))
@@ -290,7 +304,10 @@ internal sealed class EraDataReader : IDisposable
 		{
 			str = reader.ReadLine();
 			if (str == null)
-				throw new FileEE(trerror.UnexpectedSaveDataEnd.Text);
+			{
+				ExtendedDataTruncated = true;
+				break;//セーブデータが途中で終わっている場合はここまでを有効なデータとして扱う
+			}
 			if (str.Equals(FINISHER, StringComparison.Ordinal))
 				throw new FileEE(trerror.InvalidSaveDataFormat.Text);
 			if (str.Equals(EMU_SEPARATOR, StringComparison.Ordinal))
@@ -325,7 +342,10 @@ internal sealed class EraDataReader : IDisposable
 		{
 			str = reader.ReadLine();
 			if (str == null)
-				throw new FileEE(trerror.UnexpectedSaveDataEnd.Text);
+			{
+				ExtendedDataTruncated = true;
+				break;//セーブデータが途中で終わっている場合はここまでを有効なデータとして扱う
+			}
 			if (str.Equals(FINISHER, StringComparison.Ordinal))
 				throw new FileEE(trerror.InvalidSaveDataFormat.Text);
 			if (str.Equals(EMU_SEPARATOR, StringComparison.Ordinal))
@@ -360,7 +380,10 @@ internal sealed class EraDataReader : IDisposable
 		{
 			str = reader.ReadLine();
 			if (str == null)
-				throw new FileEE(trerror.UnexpectedSaveDataEnd.Text);
+			{
+				ExtendedDataTruncated = true;
+				break;//セーブデータが途中で終わっている場合はここまでを有効なデータとして扱う
+			}
 			if (str.Equals(FINISHER, StringComparison.Ordinal))
 				throw new FileEE(trerror.InvalidSaveDataFormat.Text);
 			if (str.Equals(EMU_SEPARATOR, StringComparison.Ordinal))
@@ -406,7 +429,10 @@ internal sealed class EraDataReader : IDisposable
 		{
 			str = reader.ReadLine();
 			if (str == null)
-				throw new FileEE(trerror.UnexpectedSaveDataEnd.Text);
+			{
+				ExtendedDataTruncated = true;
+				break;//セーブデータが途中で終わっている場合はここまでを有効なデータとして扱う
+			}
 			if (str.Equals(FINISHER, StringComparison.Ordinal))
 				throw new FileEE(trerror.InvalidSaveDataFormat.Text);
 			if (str.Equals(EMU_SEPARATOR, StringComparison.Ordinal))
@@ -428,7 +454,10 @@ internal sealed class EraDataReader : IDisposable
 		{
 			str = reader.ReadLine();
 			if (str == null)
-				throw new FileEE(trerror.UnexpectedSaveDataEnd.Text);
+			{
+				ExtendedDataTruncated = true;
+				break;//セーブデータが途中で終わっている場合はここまでを有効なデータとして扱う
+			}
 			if (str.Equals(FINISHER, StringComparison.Ordinal))
 				throw new FileEE(trerror.InvalidSaveDataFormat.Text);
 			if (str.Equals(EMU_SEPARATOR, StringComparison.Ordinal))
@@ -485,7 +514,10 @@ internal sealed class EraDataReader : IDisposable
 		{
 			str = reader.ReadLine();
 			if (str == null)
-				throw new FileEE(trerror.UnexpectedSaveDataEnd.Text);
+			{
+				ExtendedDataTruncated = true;
+				break;//セーブデータが途中で終わっている場合はここまでを有効なデータとして扱う
+			}
 			if (str.Equals(FINISHER, StringComparison.Ordinal))
 				throw new FileEE(trerror.InvalidSaveDataFormat.Text);
 			if (str.Equals(EMU_SEPARATOR, StringComparison.Ordinal))
@@ -505,7 +537,10 @@ internal sealed class EraDataReader : IDisposable
 		{
 			str = reader.ReadLine();
 			if (str == null)
-				throw new FileEE(trerror.UnexpectedSaveDataEnd.Text);
+			{
+				ExtendedDataTruncated = true;
+				break;//セーブデータが途中で終わっている場合はここまでを有効なデータとして扱う
+			}
 			if (str.Equals(FINISHER, StringComparison.Ordinal))
 				throw new FileEE(trerror.InvalidSaveDataFormat.Text);
 			if (str.Equals(EMU_SEPARATOR, StringComparison.Ordinal))
@@ -542,7 +577,10 @@ internal sealed class EraDataReader : IDisposable
 		{
 			str = reader.ReadLine();
 			if (str == null)
-				throw new FileEE(trerror.UnexpectedSaveDataEnd.Text);
+			{
+				ExtendedDataTruncated = true;
+				break;//セーブデータが途中で終わっている場合はここまでを有効なデータとして扱う
+			}
 			if (str.Equals(FINISHER, StringComparison.Ordinal))
 				throw new FileEE(trerror.InvalidSaveDataFormat.Text);
 			if (str.Equals(EMU_SEPARATOR, StringComparison.Ordinal))
@@ -587,7 +625,10 @@ internal sealed class EraDataReader : IDisposable
 		{
 			str = reader.ReadLine();
 			if (str == null)
-				throw new FileEE(trerror.UnexpectedSaveDataEnd.Text);
+			{
+				ExtendedDataTruncated = true;
+				break;//セーブデータが途中で終わっている場合はここまでを有効なデータとして扱う
+			}
 			if (str.Equals(FINISHER, StringComparison.Ordinal))
 				throw new FileEE(trerror.InvalidSaveDataFormat.Text);
 			if (str.Equals(EMU_SEPARATOR, StringComparison.Ordinal))

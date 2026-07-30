@@ -1,4 +1,4 @@
-﻿using System.Collections.Generic;
+using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
 namespace MinorShift.Emuera.AI.Traits;
@@ -30,6 +30,20 @@ internal sealed class AiTraitFile
     /// </summary>
     [JsonPropertyName("compute")]
     public Compute.AiComputeTemplate Compute { get; set; }
+
+    /// <summary>
+    /// 交互控制契约。P4 新增，定义 AI 能提出哪些选项、能触发哪些命令、能否注入自由输入。
+    /// 留空时 AI 只能产出正文与数值，一切交互指令都会被忽略。
+    /// </summary>
+    [JsonPropertyName("interact")]
+    public Interact.AiInteractTemplate Interact { get; set; }
+
+    /// <summary>
+    /// 上下文压缩契约。P5 新增，定义上下文窗口大小、压缩策略与保留参数。
+    /// 留空时使用默认值（8192 token 窗口、保留 3 轮、80% 触发）。
+    /// </summary>
+    [JsonPropertyName("context")]
+    public Context.AiContextTemplate Context { get; set; }
 }
 
 /// <summary>

@@ -711,6 +711,18 @@ internal sealed partial class Process(EmueraConsole view)
 
 	public static string getRawTextFormFilewithLine(ScriptPosition? position)
 	{
+		try
+		{
+			return getRawTextFormFilewithLineCore(position);
+		}
+		catch
+		{
+			return "";
+		}
+	}
+
+	private static string getRawTextFormFilewithLineCore(ScriptPosition? position)
+	{
 		string extents = position.Value.Filename[^4..].ToLower();
 		if (extents == ".erb")
 		{
@@ -721,7 +733,7 @@ internal sealed partial class Process(EmueraConsole view)
 		else if (extents == ".csv")
 		{
 			return File.Exists(Program.CsvDir + position.Value.Filename)
-				? position.Value.LineNo > 0 ? File.ReadLines(Program.CsvDir + position.Value.Filename, EncodingHandler.DetectEncoding(Program.ErbDir + position.Value.Filename)).Skip(position.Value.LineNo - 1).First() : ""
+				? position.Value.LineNo > 0 ? File.ReadLines(Program.CsvDir + position.Value.Filename, EncodingHandler.DetectEncoding(Program.CsvDir + position.Value.Filename)).Skip(position.Value.LineNo - 1).First() : ""
 				: "";
 		}
 		else

@@ -1,0 +1,31 @@
+﻿{
+    "ApiEndpoint":  "https://gorouter.app/v1/chat/completions",
+    "Model":  "claude-opus-5",
+    "MaxTokens":  600,
+    "TimeoutSeconds":  30,
+    "MaxRetries":  1,
+    "SystemPrompt":  "你是一个ERA游戏的叙事AI，负责生成角色对话与场景描写。保持简洁，控制在300字以内。",
+    "Temperature":  0.8,
+    "UseTraitPrompt":  true,
+    "EncryptedApiKey":  "",
+    "UseComputeApi":  true,
+    "ComputeApiEndpoint":  "https://gorouter.app/v1/chat/completions",
+    "ComputeModel":  "claude-opus-5",
+    "ComputeMaxTokens":  800,
+    "ComputeTimeoutSeconds":  20,
+    "ComputeMaxRetries":  1,
+    "ComputeReusesMainKey":  false,
+    "EncryptedComputeApiKey":  "",
+    "CachedModels":  [
+                         "claude-opus-4-8",
+                         "claude-opus-4-8-thinking",
+                         "claude-opus-5",
+                         "claude-opus-5-thinking"
+                     ],
+    "CachedComputeModels":  [
+                                "claude-opus-4-8",
+                                "claude-opus-4-8-thinking",
+                                "claude-opus-5",
+                                "claude-opus-5-thinking"
+                            ]
+}

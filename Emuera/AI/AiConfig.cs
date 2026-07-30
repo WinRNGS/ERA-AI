@@ -1,4 +1,5 @@
-﻿using System;
+using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
@@ -118,6 +119,23 @@ internal static class AiConfig
         set { lock (gate) data.ComputeReusesMainKey = value; }
     }
 
+    /// <summary>
+    /// 上次从上游拉取到的主 API 模型列表。持久化的目的是：离线或限流时设置面板
+    /// 依然能给出下拉候选，不必每次开窗都打一次网络请求。
+    /// 返回副本，避免调用方改动内部集合。
+    /// </summary>
+    public static List<string> CachedModels
+    {
+        get { lock (gate) return new List<string>(data.CachedModels ?? new List<string>()); }
+        set { lock (gate) data.CachedModels = value == null ? new List<string>() : new List<string>(value); }
+    }
+
+    /// <summary>副 API 的模型列表缓存。主副可能是不同服务商，所以分开存。</summary>
+    public static List<string> CachedComputeModels
+    {
+        get { lock (gate) return new List<string>(data.CachedComputeModels ?? new List<string>()); }
+        set { lock (gate) data.CachedComputeModels = value == null ? new List<string>() : new List<string>(value); }
+    }
     public static bool HasApiKey
     {
         get { lock (gate) return !string.IsNullOrEmpty(data.EncryptedApiKey); }
@@ -291,5 +309,9 @@ internal static class AiConfig
         public int ComputeMaxRetries { get; set; } = 1;
         public bool ComputeReusesMainKey { get; set; } = true;
         public string EncryptedComputeApiKey { get; set; }
+
+        // ---------- 模型列表缓存（从上游 /v1/models 拉取后落盘） ----------
+        public List<string> CachedModels { get; set; } = new();
+        public List<string> CachedComputeModels { get; set; } = new();
     }
 }

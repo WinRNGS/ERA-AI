@@ -2375,7 +2375,13 @@ internal sealed class VariableEvaluator : IDisposable
 
 	private static string getSaveDataPathG() { return Config.Config.SavDir + "global.sav"; }
 	private static string getSaveDataPath(int index) { return string.Create(CultureInfo.InvariantCulture, $"{Config.Config.SavDir}save{index:00}.sav"); }
-	private static string getSaveDataPath(string s) { return $"{Config.Config.SavDir}save{s:00}.sav"; }
+	private static string getSaveDataPath(string s)
+	{
+		//文字列に対する`:00`書式指定子は無視されるので、int版と桁数が揃うように明示的に処理する
+		if (int.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out int index) && index >= 0)
+			return getSaveDataPath(index);
+		return $"{Config.Config.SavDir}save{s}.sav";
+	}
 
 	private static string getSaveDataPathV(int index) { return Program.DatDir + string.Format("var_{0:00}.dat", index); }
 	private static string getSaveDataPathC(int index) { return Program.DatDir + string.Format("chara_{0:00}.dat", index); }
@@ -2998,16 +3004,24 @@ internal sealed class VariableEvaluator : IDisposable
 		#endregion
 	}
 
+	/// <summary>
+	/// 直前のセーブ失敗の理由。SaveToがfalseを返した時のみ意味を持つ。
+	/// </summary>
+	public static string LastSaveError { get; private set; } = "";
+
 	public bool SaveTo(int saveIndex, string saveText)
 	{
 		string filepath = getSaveDataPath(saveIndex);
+		//一旦一時ファイルに書き、成功したら差し替える。
+		//途中で失敗した時に既存のセーブデータを壊さないため。
+		string temppath = filepath + ".tmp";
 		FileStream fs = null;
 		EraDataWriter writer = null;
 		EraBinaryDataWriter bWriter = null;
 		try
 		{
 			Config.Config.CreateSavDir();
-			fs = new FileStream(filepath, FileMode.Create, FileAccess.Write);
+			fs = new FileStream(temppath, FileMode.Create, FileAccess.Write);
 			if (Config.Config.SystemSaveInBinary)
 			{
 				bWriter = new EraBinaryDataWriter(fs);
@@ -3018,20 +3032,48 @@ internal sealed class VariableEvaluator : IDisposable
 				writer = new EraDataWriter(fs);
 				SaveToStream(writer, saveText);
 			}
+		}
+		catch (Exception e)
+		{
+			LastSaveError = e.Message;
+			closeSaveStream(writer, bWriter, fs);
+			deleteTempSaveFile(temppath);
+			return false;
+		}
+		closeSaveStream(writer, bWriter, fs);
+		try
+		{
+			File.Move(temppath, filepath, true);
+			LastSaveError = "";
 			return true;
+		}
+		catch (Exception e)
+		{
+			LastSaveError = e.Message;
+			deleteTempSaveFile(temppath);
+			return false;
+		}
+	}
+
+	private static void closeSaveStream(EraDataWriter writer, EraBinaryDataWriter bWriter, FileStream fs)
+	{
+		if (writer != null)
+			writer.Close();
+		else if (bWriter != null)
+			bWriter.Close();
+		else if (fs != null)
+			fs.Close();
+	}
+
+	private static void deleteTempSaveFile(string temppath)
+	{
+		try
+		{
+			if (File.Exists(temppath))
+				File.Delete(temppath);
 		}
 		catch (Exception)
 		{
-			return false;
-		}
-		finally
-		{
-			if (writer != null)
-				writer.Close();
-			else if (bWriter != null)
-				bWriter.Close();
-			else if (fs != null)
-				fs.Close();
 		}
 	}
 

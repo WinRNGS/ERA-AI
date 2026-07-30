@@ -55,6 +55,42 @@ internal sealed class AiTurnResult
 
 	/// <summary>后台耗时，用于观测延迟。</summary>
 	public long ElapsedMs;
+
+	/// <summary>P4：本轮建议的玩家选项（已清洗）。面板把它们摆成按钮。</summary>
+	public List<Interact.AiOption> Options = [];
+
+	/// <summary>P4：选项清洗留下的说明（丢弃/截断了几条）。为空表示原样采纳。</summary>
+	public string OptionNote;
+
+	/// <summary>
+	/// P4：本轮通过校验、等待执行的交互指令。为 null 表示本轮不推进流程。
+	/// auto_execute = false（默认）时它只是摆在面板上，等玩家点「执行动作」。
+	/// </summary>
+	public Interact.AiPendingAction PendingAction;
+
+	/// <summary>P4：交互指令被丢弃的原因。非空表示模型提了动作但没被采用。</summary>
+	public string ActionSkipReason;
+
+	/// <summary>P4：本轮的交互指令是否已自动执行（auto_execute = true 且校验全过）。</summary>
+	public bool ActionAutoExecuted;
+
+	/// <summary>P4：本轮实际带上的引用条数（引用会拼在本轮输入的开头）。</summary>
+	public int QuoteCount;
+
+	/// <summary>P4：这一轮是「带修改指令重生成」而非新的一轮输入。</summary>
+	public bool IsRevision;
+
+	/// <summary>P4：本轮 assistant 消息的 id，供引用与编辑定位。0 表示没有记进历史。</summary>
+	public long AssistantMessageId;
+
+	/// <summary>
+	/// P4：本轮实际送出的玩家输入（已含引用前缀）。终止后「重试」要拿它原样重发，
+	/// 不能让玩家自己再敲一遍——那时引用栏已经清空了，重敲的内容与原轮次不同。
+	/// </summary>
+	public string RequestInput;
+
+	/// <summary>P4：本轮使用的 system prompt。终止后「重试」复用它，避免重新装配读到已变的数值。</summary>
+	public string RequestSystemPrompt;
 }
 
 /// <summary>

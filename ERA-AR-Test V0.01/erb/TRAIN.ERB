@@ -1,0 +1,291 @@
+;===============================================================
+; TRAIN.ERB —— 调教（TRAIN）流程
+;
+; 这是 AI 联调的主战场：只有走进 TRAIN 流程，TARGET、各项数值、
+; 引擎的输入等待状态才同时处于"AI 模块预期的样子"。
+;
+; 引擎的 TRAIN 状态机（Process.SystemProc.cs）调用顺序：
+;   BEGIN TRAIN
+;     → @EVENTTRAIN            （可选）
+;     → @SHOW_STATUS
+;     → @COM_ABLExx            （对 TRAIN.CSV 每个编号各调一次；
+;                                不存在时按 COM_ABLE初期値=1 视为可用）
+;     → @SHOW_USERCOM
+;     → 等待数值输入
+;         输入 = 命令的显示序号 → @EVENTCOM → @COMxx
+;                @COMxx RETURN 非0 → @SOURCE_CHECK → @EVENTCOMEND
+;                @COMxx RETURN 0   → 直接 @EVENTCOMEND
+;         输入 = 其它数值        → @USERCOM（原值在 RESULT 里）
+;     → 回到 @SHOW_STATUS 循环
+;   BEGIN AFTERTRAIN → @EVENTEND
+;
+; 关于命令编号的坑：列表里显示的 [n] 是"第 n 个可用命令"的显示序号，
+; 不是 TRAIN.CSV 里的编号。引擎内部用 comAble[显示序号] = CSV编号 映射。
+; 所以 P4 的 interact.allowed_commands 里的 value 必须填**显示序号**，
+; 填 CSV 编号会选中另一条命令，或者干脆落到 @USERCOM 去。
+; 本环境 TRAIN.CSV 里的 7 条命令全部可用，于是：
+;   显示序号 0=爱抚(0)  1=胸爱抚(5)  2=接吻(6)  3=打屁股(40)
+;              4=放置PLAY(55)  5=交谈(56)  6=羞耻PLAY(57)
+;===============================================================
+
+;---------------------------------------------------------------
+; 调教开始
+;---------------------------------------------------------------
+@EVENTTRAIN
+PRINTL
+DRAWLINE
+PRINTFORML 　调教中：%NAME:TARGET%（第 {DAY:0} 天）
+DRAWLINE
+CFLAG:TARGET:今日已交谈 = 0
+
+;---------------------------------------------------------------
+; 每轮命令列表之前的状态显示
+;---------------------------------------------------------------
+@SHOW_STATUS
+PRINTL
+PRINTFORM 体力 {BASE:TARGET:0}/{MAXBASE:TARGET:0}
+PRINTFORM 　气力 {BASE:TARGET:1}/{MAXBASE:TARGET:1}
+PRINTFORM 　好感度 {CFLAG:TARGET:好感度}
+PRINTFORM 　信頼 {CFLAG:TARGET:信頼}
+PRINTFORM 　恐怖度 {CFLAG:TARGET:恐怖度}
+PRINTFORML 　恭顺 {PALAM:TARGET:恭顺}
+PRINTL
+PRINTL 可执行的命令（[]内是显示序号，interact 的 value 用的就是它）：
+
+;---------------------------------------------------------------
+; 命令列表之后的追加菜单
+;
+; 追加项从 100 起：命令的显示序号最多到 6，绝不会撞号。
+;---------------------------------------------------------------
+@SHOW_USERCOM
+PRINTL
+DRAWLINE
+PRINTL 　[100] 详细状态与词条推演　[101] 手动改数值　[102] 场景预设
+PRINTL 　[103] 打印当前 TARGET 与输入状态说明
+PRINTL 　[999] 结束调教
+PRINTL
+
+;---------------------------------------------------------------
+; 追加菜单的处理
+;---------------------------------------------------------------
+@USERCOM
+SELECTCASE RESULT
+	CASE 100
+		CALL SHOW_TARGET_DETAIL
+		RETURN 1
+	CASE 101
+		CALL MANUAL_EDIT
+		RETURN 1
+	CASE 102
+		CALL AI_SCENE_PRESET
+		RETURN 1
+	CASE 103
+		CALL PRINT_AI_HOOK_INFO
+		RETURN 1
+	CASE 999
+		PRINTL
+		PRINTL 调教结束。
+		BEGIN AFTERTRAIN
+		RETURN 1
+	CASEELSE
+		PRINTL 无效编号。
+ENDSELECT
+RETURN 0
+
+;---------------------------------------------------------------
+; 打印 AI 挂钩点信息。
+; 副 API 的交互指令能不能执行，取决于引擎此刻在等什么输入；
+; 在 TRAIN 的命令等待里，引擎等的是整数，所以：
+;   命令载荷（整数）    可以执行
+;   input_str（文本）   会被拒绝，理由是类型不匹配
+; 这一段把这个判定摊开写，避免测试时误判成"功能没实现"。
+;---------------------------------------------------------------
+@PRINT_AI_HOOK_INFO
+PRINTL
+DRAWLINE
+PRINTL AI 挂钩点信息
+DRAWLINE
+PRINTFORML 　TARGET = {TARGET:0}（%NAME:TARGET%，番号 {NO:TARGET}）
+PRINTFORML 　SELECTCOM = {SELECTCOM:0}　PREVCOM = {PREVCOM:0}
+PRINTL
+PRINTL 　引擎当前状态：TRAIN 命令等待（等整数输入）
+PRINTL 　　可执行：kind=command（载荷是显示序号）、kind=input_int
+PRINTL 　　会被拒：kind=input_str —— AiActionExecutor 报「引擎在等 IntValue」
+PRINTL
+PRINTL 　命令显示序号对照（本环境 7 条命令全部可用）：
+PRINTL 　　[0] 爱抚　　[1] 胸爱抚　[2] 接吻　　[3] 打屁股
+PRINTL 　　[4] 放置PLAY　[5] 交谈　　[6] 羞耻PLAY
+PRINTL
+PRINTL 　若在 ai_traits.json 的 interact.allowed_commands 里
+PRINTL 　把 value 写成 TRAIN.CSV 的编号（如 56），引擎会把它当成
+PRINTL 　显示序号 56 —— 越界后落到 @USERCOM，打印「无效编号」。
+DRAWLINE
+PRINTL
+
+;===============================================================
+; 各命令本体。RETURN 非 0 表示执行成功（引擎随后调 @SOURCE_CHECK）
+;
+; 约定：
+;   LOSEBASE:0 / :1  本命令消耗的体力／气力（@SOURCE_CHECK 里结算）
+;   SOURCE:TARGET:n  本命令产生的调教源（@SOURCE_CHECK 里换成 PALAM）
+; 两者都由引擎在每轮开始时自动清零，不需要手动复位。
+;===============================================================
+
+;---------------------------------------------------------------
+@COM0
+PRINTFORML %NAME:TARGET% 的身体被爱抚着。
+LOSEBASE:0 += 10
+LOSEBASE:1 += 10
+SOURCE:TARGET:阴核快感 += 50
+SOURCE:TARGET:私处快感 += 30
+RETURN 1
+
+;---------------------------------------------------------------
+@COM5
+PRINTFORML 你的手覆上了 %NAME:TARGET% 的胸口。
+LOSEBASE:0 += 8
+LOSEBASE:1 += 8
+SOURCE:TARGET:乳房快感 += 40
+SOURCE:TARGET:情爱 += 10
+RETURN 1
+
+;---------------------------------------------------------------
+@COM6
+PRINTFORML 你吻上了 %NAME:TARGET% 的唇。
+LOSEBASE:0 += 5
+LOSEBASE:1 += 15
+SOURCE:TARGET:情爱 += 60
+CFLAG:TARGET:亲密度 += 1
+RETURN 1
+
+;---------------------------------------------------------------
+@COM40
+PRINTFORML 清脆的一声，%NAME:TARGET% 弓起了背。
+LOSEBASE:0 += 20
+LOSEBASE:1 += 10
+SOURCE:TARGET:疼痛 += 80
+SOURCE:TARGET:屈从 += 20
+CFLAG:TARGET:恐怖度 += 1
+RETURN 1
+
+;---------------------------------------------------------------
+@COM55
+PRINTFORML 你什么也没做，只是看着 %NAME:TARGET%。
+LOSEBASE:1 += 5
+RETURN 1
+
+;---------------------------------------------------------------
+; 交谈 —— AI 联调的主要挂钩点。
+;
+; 执行完这条命令时：TARGET 已就绪、数值已更新、引擎回到命令等待，
+; 正是"让 AI 接着往下写"的时机。
+;---------------------------------------------------------------
+@COM56
+PRINTFORML 你和 %NAME:TARGET% 交谈起来。
+LOSEBASE:0 += 10
+LOSEBASE:1 += 20
+SOURCE:TARGET:会话 += 30
+SOURCE:TARGET:恭顺追加 += 50
+CFLAG:TARGET:对话次数 += 1
+CFLAG:TARGET:最后对话日 = DAY:0
+CFLAG:TARGET:今日已交谈 = 1
+EXP:TARGET:调教会话经验 += 1
+RETURN 1
+
+;---------------------------------------------------------------
+@COM57
+PRINTFORML %NAME:TARGET% 被迫摆出难以言说的姿势。
+LOSEBASE:0 += 12
+LOSEBASE:1 += 18
+SOURCE:TARGET:屈从 += 40
+SOURCE:TARGET:疼痛 += 10
+RETURN 1
+
+;---------------------------------------------------------------
+; 交谈命令执行后追加的 AI 提示。
+; 单独放在 @EVENTCOMEND 里判断，而不是写在 @COM56 末尾，
+; 是因为 @COM56 之后引擎还要跑 @SOURCE_CHECK（会打印数值变动），
+; 提示写在最后才不会被数值输出淹没。
+;---------------------------------------------------------------
+@EVENTCOMEND
+IF CFLAG:TARGET:今日已交谈 == 1 && SELECTCOM:0 == 56
+	CFLAG:TARGET:AI交谈次数 += 1
+	FLAG:AI交谈总次数 += 1
+	PRINTL
+	PRINTL ──「AI 交谈」挂钩点──
+	PRINTFORML 　TARGET = {TARGET:0}（%NAME:TARGET%）　本角色累计 AI 交谈 {CFLAG:TARGET:AI交谈次数} 次
+	PRINTL 　1. 「AI → 显示/隐藏 AI 面板」打开面板，输入玩家台词后发送
+	PRINTL 　2. 「AI → 预览当前角色 prompt」核对词条装配
+	PRINTL 　3. 「AI → 显示上轮副 API 往返」看数值回写有没有落到 CFLAG
+	PRINTL 　4. 回写后用 [100] 复查好感度／信頼，与面板日志的数字对照
+	PRINTL
+	CFLAG:TARGET:今日已交谈 = 2
+ENDIF
+DRAWLINE
+
+;===============================================================
+; 调教源结算。@COMxx 成功后由引擎调用
+;===============================================================
+@SOURCE_CHECK
+; --- SOURCE → PALAM。UPCHECK 会把 UP/DOWN 并入 PALAM 并打印变动 ---
+UP:阴核 += SOURCE:TARGET:阴核快感
+UP:私处 += SOURCE:TARGET:私处快感
+UP:乳房 += SOURCE:TARGET:乳房快感
+UP:欲情 += SOURCE:TARGET:情爱
+UP:耻情 += SOURCE:TARGET:达成感
+UP:苦痛 += SOURCE:TARGET:疼痛
+UP:屈服 += SOURCE:TARGET:屈从
+UP:习得 += SOURCE:TARGET:会话
+UP:恭顺 += SOURCE:TARGET:恭顺追加
+UPCHECK
+
+; --- 体力气力消耗 ---
+IF LOSEBASE:0 > 0 || LOSEBASE:1 > 0
+	BASE:TARGET:0 -= LOSEBASE:0
+	BASE:TARGET:1 -= LOSEBASE:1
+	SIF BASE:TARGET:0 < 0
+		BASE:TARGET:0 = 0
+	SIF BASE:TARGET:1 < 0
+		BASE:TARGET:1 = 0
+	PRINTFORML 体力 {BASE:TARGET:0}　气力 {BASE:TARGET:1}
+ENDIF
+
+; --- 体力见底时结束本次调教。
+;     顺带效果：结束后角色处于 BASE:0 == 0 的状态，
+;     正好落在 ai_traits.json 的 exhausted 词条区间内。 ---
+IF BASE:TARGET:0 <= 0
+	PRINTL
+	PRINTFORML %NAME:TARGET% 已经撑不住了。
+	BEGIN AFTERTRAIN
+ENDIF
+
+;---------------------------------------------------------------
+; BEGIN AFTERTRAIN 之后
+;---------------------------------------------------------------
+@EVENTEND
+PRINTL
+DRAWLINE
+PRINTFORML 本次调教结束。%NAME:TARGET% 好感度 {CFLAG:TARGET:好感度}　恭顺 {PALAM:TARGET:恭顺}　屈服 {PALAM:TARGET:屈服}
+DRAWLINE
+PRINTL
+BEGIN SHOP
+
+;===============================================================
+; ABLUP。本环境不主动进入，但保留最小实现，
+; 避免误触 BEGIN ABLUP 时引擎找不到函数直接报错。
+;===============================================================
+@SHOW_JUEL
+PRINTL
+DRAWLINE
+PRINTFORML %NAME:TARGET% 的珠
+PRINTFORML 　恭顺 {JUEL:TARGET:恭顺}　欲情 {JUEL:TARGET:欲情}　屈服 {JUEL:TARGET:屈服}
+DRAWLINE
+
+@SHOW_ABLUP_SELECT
+PRINTL 　[100] 结束
+PRINTL
+
+@USERABLUP
+SIF RESULT == 100
+	BEGIN TURNEND
+RETURN 0

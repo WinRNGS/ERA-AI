@@ -1,4 +1,5 @@
-﻿using MinorShift.Emuera.AI.Traits;
+﻿using MinorShift.Emuera.AI.Interact;
+using MinorShift.Emuera.AI.Traits;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -21,6 +22,17 @@ internal static class AiComputeRequestBuilder
     /// 为本轮事件装配副 API 请求。charaNo 为角色号；失败时返回 null 并给出原因。
     /// </summary>
     public static AiComputeRequest Build(long charaNo, string eventText, long ticket, out string error)
+        => Build(charaNo, eventText, ticket, false, out error);
+
+    /// <summary>
+    /// 同上，但可声明「引擎此刻是否在等输入」。
+    ///
+    /// 这个参数决定 P4 的交互指令要不要下发给模型。引擎没在等输入时告诉它"你可以推进流程"，
+    /// 只会诱导它编一个动作出来，而那个动作在执行阶段必定被引擎状态层拒掉——
+    /// 白花一次 token，还在面板上留下一条"AI 想做但做不到"的噪音。
+    /// </summary>
+    public static AiComputeRequest Build(
+        long charaNo, string eventText, long ticket, bool engineWaitingInput, out string error)
     {
         error = null;
 
@@ -59,6 +71,10 @@ internal static class AiComputeRequestBuilder
             return null;
         }
 
+        // 交互指令只在三个条件同时成立时才下发：词条库写了 interact 段、该段启用、引擎在等输入。
+        AiInteractTemplate interact = AiTraitLibrary.InteractTemplate;
+        bool interactOn = interact != null && interact.Enabled && engineWaitingInput;
+
         var request = new AiComputeRequest
         {
             Ticket = ticket,
@@ -66,12 +82,14 @@ internal static class AiComputeRequestBuilder
             CharaNo = charaNo,
             Fields = fields,
             Template = template,
+            Interact = interact,
+            InteractEnabled = interactOn,
             EventText = eventText ?? "",
             StateJson = snapshot.ToJson(),
-            SchemaJson = BuildSchema(fields, snapshot),
+            SchemaJson = BuildSchema(fields, snapshot, interactOn ? interact : null),
         };
 
-        request.Messages = BuildMessages(request, template);
+        request.Messages = BuildMessages(request, template, interactOn ? interact : null);
         return request;
     }
 
@@ -130,7 +148,8 @@ internal static class AiComputeRequestBuilder
     /// 生成 function calling 的 parameters schema。
     /// field 用 enum 而不是自由字符串，是为了让模型在结构上就无法引用未声明的字段。
     /// </summary>
-    private static string BuildSchema(List<AiComputeField> fields, AiStateSnapshotData snapshot)
+    private static string BuildSchema(
+        List<AiComputeField> fields, AiStateSnapshotData snapshot, AiInteractTemplate interact)
     {
         var ops = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (AiComputeField f in fields)
@@ -237,6 +256,11 @@ internal static class AiComputeRequestBuilder
             w.WriteString("description", "你自己不确定的地方");
             w.WriteEndObject();
 
+            // P4：交互指令。只在 interact 段启用且引擎在等输入时才出现在 schema 里——
+            // 结构上不存在的字段，模型填不出来，这比事后校验可靠。
+            if (interact != null)
+                WriteInteractSchema(w, interact);
+
             w.WriteEndObject();
 
             w.WriteStartArray("required");
@@ -248,6 +272,120 @@ internal static class AiComputeRequestBuilder
             w.WriteEndObject();
         }
         return Encoding.UTF8.GetString(buffer.ToArray());
+    }
+
+    /// <summary>
+    /// 交互指令的 schema 片段。command 与 kind 都是 enum，理由同 field：
+    /// 让"引用未声明的命令"在结构层面就不可能发生，而不是等到执行时才拒。
+    /// </summary>
+    private static void WriteInteractSchema(Utf8JsonWriter w, AiInteractTemplate interact)
+    {
+        int maxOptions = interact.MaxOptions > 0 ? interact.MaxOptions : 4;
+        int maxChars = interact.OptionMaxChars > 0 ? interact.OptionMaxChars : 24;
+
+        w.WriteStartObject("options");
+        w.WriteString("type", "array");
+        w.WriteString("description",
+            $"给玩家的下一步短选项，最多 {maxOptions} 条，每条不超过 {maxChars} 字；没有合适选项时给空数组");
+        w.WriteStartObject("items");
+        w.WriteString("type", "object");
+        w.WriteStartObject("properties");
+        w.WriteStartObject("label");
+        w.WriteString("type", "string");
+        w.WriteString("description", $"选项文本，不超过 {maxChars} 字");
+        w.WriteEndObject();
+        w.WriteStartObject("hint");
+        w.WriteString("type", "string");
+        w.WriteString("description", "可选的一句补充说明");
+        w.WriteEndObject();
+        w.WriteEndObject();
+        w.WriteStartArray("required");
+        w.WriteStringValue("label");
+        w.WriteEndArray();
+        w.WriteEndObject();
+        w.WriteEndObject();
+
+        var kinds = new List<string> { "none" };
+        if (interact.AllowedCommands != null && interact.AllowedCommands.Count > 0)
+            kinds.Add("command");
+        if (interact.AllowInputInjection && interact.HasIntRange)
+            kinds.Add("input_int");
+        if (interact.AllowInputInjection && interact.InputStrMaxChars > 0)
+            kinds.Add("input_str");
+
+        w.WriteStartObject("action");
+        w.WriteString("type", "object");
+        w.WriteString("description", "推进游戏流程的动作。不确定就填 kind=\"none\"——数值写错能撤销，流程被推进无法撤销");
+        w.WriteStartObject("properties");
+
+        w.WriteStartObject("kind");
+        w.WriteString("type", "string");
+        w.WriteStartArray("enum");
+        foreach (string kind in kinds)
+            w.WriteStringValue(kind);
+        w.WriteEndArray();
+        w.WriteString("description", "none 表示本轮不推进流程");
+        w.WriteEndObject();
+
+        if (interact.AllowedCommands != null && interact.AllowedCommands.Count > 0)
+        {
+            w.WriteStartObject("command");
+            w.WriteString("type", "string");
+            w.WriteStartArray("enum");
+            foreach (AiInteractCommand c in interact.AllowedCommands)
+            {
+                if (c != null && !string.IsNullOrWhiteSpace(c.Command))
+                    w.WriteStringValue(c.Command);
+            }
+            w.WriteEndArray();
+            w.WriteString("description", BuildCommandDescription(interact));
+            w.WriteEndObject();
+        }
+
+        if (interact.AllowInputInjection && interact.HasIntRange)
+        {
+            w.WriteStartObject("value");
+            w.WriteString("type", "integer");
+            w.WriteString("description", $"kind=input_int 时的数值，取值范围 [{interact.IntRangeMin}, {interact.IntRangeMax}]");
+            w.WriteEndObject();
+        }
+
+        if (interact.AllowInputInjection && interact.InputStrMaxChars > 0)
+        {
+            w.WriteStartObject("text");
+            w.WriteString("type", "string");
+            w.WriteString("description", $"kind=input_str 时的文本，不超过 {interact.InputStrMaxChars} 字，不得含换行");
+            w.WriteEndObject();
+        }
+
+        w.WriteStartObject("reason");
+        w.WriteString("type", "string");
+        w.WriteString("description", "一句话说明为什么要做这个动作");
+        w.WriteEndObject();
+
+        w.WriteEndObject();
+        w.WriteStartArray("required");
+        w.WriteStringValue("kind");
+        w.WriteEndArray();
+        w.WriteEndObject();
+    }
+
+    private static string BuildCommandDescription(AiInteractTemplate interact)
+    {
+        var sb = new StringBuilder("可触发命令：");
+        bool first = true;
+        foreach (AiInteractCommand c in interact.AllowedCommands)
+        {
+            if (c == null || string.IsNullOrWhiteSpace(c.Command))
+                continue;
+            if (!first)
+                sb.Append('；');
+            first = false;
+            sb.Append(c.Command);
+            if (!string.IsNullOrWhiteSpace(c.Description))
+                sb.Append('=').Append(c.Description.Trim());
+        }
+        return sb.ToString();
     }
 
     private static string BuildFieldDescription(List<AiComputeField> fields)
@@ -267,16 +405,24 @@ internal static class AiComputeRequestBuilder
         return sb.ToString();
     }
 
-    private static List<ChatMessage> BuildMessages(AiComputeRequest request, AiComputeTemplate template)
+    private static List<ChatMessage> BuildMessages(
+        AiComputeRequest request, AiComputeTemplate template, AiInteractTemplate interact)
     {
+        string instruction = string.IsNullOrWhiteSpace(template.SystemPrompt)
+            ? AiComputeDefaults.SystemPrompt
+            : template.SystemPrompt;
+
+        // 交互说明追加在数值指令之后而不是替换它：数值结算始终是副 API 的主职，
+        // 交互只是附加能力。顺序上先说主职，避免模型把重心挪到"给选项"上。
+        if (interact != null)
+            instruction = instruction.TrimEnd() + "\n\n" + AiInteractDefaults.SystemPromptFragment;
+
         var messages = new List<ChatMessage>
         {
             new()
             {
                 Role = "system",
-                Content = string.IsNullOrWhiteSpace(template.SystemPrompt)
-                    ? AiComputeDefaults.SystemPrompt
-                    : template.SystemPrompt,
+                Content = instruction,
             },
         };
 
@@ -329,6 +475,12 @@ internal sealed class AiComputeRequest
     public List<ChatMessage> Messages = [];
     public List<AiComputeField> Fields = [];
     public AiComputeTemplate Template;
+
+    /// <summary>交互契约（P4）。为 null 表示词条库没写 interact 段。</summary>
+    public AiInteractTemplate Interact;
+
+    /// <summary>本轮是否真的把交互指令下发给了模型（还要看 interact.enabled 与引擎是否在等输入）。</summary>
+    public bool InteractEnabled;
 
     public AiComputeField FindField(string name)
     {
@@ -383,6 +535,26 @@ internal static class AiComputeMemory
             });
             while (entries.Count > MaxRounds)
                 entries.RemoveAt(0);
+        }
+    }
+
+    /// <summary>
+    /// 撤掉最新的一条（限定 turn_id，防止误删别轮的记录）。
+    ///
+    /// 用在「一轮被终止」这条路上：主 API 已经返回、短记忆已经写下摘要，玩家的终止请求才落地。
+    /// 那一轮的数值已经回滚，摘要留着就等于告诉副 API「这段剧情算过了」，
+    /// 它下一轮会在一个不存在的结算基础上继续推演。
+    /// </summary>
+    public static bool TryRemoveLast(string turnId)
+    {
+        if (string.IsNullOrEmpty(turnId))
+            return false;
+        lock (gate)
+        {
+            if (entries.Count == 0 || !string.Equals(entries[^1].TurnId, turnId, StringComparison.Ordinal))
+                return false;
+            entries.RemoveAt(entries.Count - 1);
+            return true;
         }
     }
 

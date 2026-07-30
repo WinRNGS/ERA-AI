@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -60,6 +60,18 @@ internal static class AiTraitLibrary
     public static Compute.AiComputeTemplate ComputeTemplate
     {
         get { lock (gate) return file.Compute; }
+    }
+
+    /// <summary>交互控制契约（P4）。词条库没写 interact 段时为 null，此时一切交互指令都被忽略。</summary>
+    public static Interact.AiInteractTemplate InteractTemplate
+    {
+        get { lock (gate) return file.Interact; }
+    }
+
+    /// <summary>上下文压缩契约（P5）。词条库没写 context 段时为 null，此时使用默认值。</summary>
+    public static Context.AiContextTemplate ContextTemplate
+    {
+        get { lock (gate) return file.Context; }
     }
 
     public static AiTrait Find(string id)
@@ -312,6 +324,61 @@ internal static class AiTraitLibrary
         }
 
         ValidateCompute(target.Compute, diag);
+        ValidateInteract(target.Interact, diag);
+    }
+
+    /// <summary>
+    /// 交互契约的静态校验。同样只报告不修正。
+    /// 这里每一条都是「写错了不校验就会静默失效」的项：命令既没 value 也没 input 时
+    /// 会喂一个空串进引擎（引擎当成空输入接受），是最难查的一类。
+    /// </summary>
+    private static void ValidateInteract(Interact.AiInteractTemplate interact, List<string> diag)
+    {
+        if (interact == null)
+            return;
+
+        if (interact.MaxOptions <= 0)
+            diag.Add($"interact.max_options 为 {interact.MaxOptions}，AI 提出的选项都会被丢弃。");
+        if (interact.OptionMaxChars <= 0)
+            diag.Add($"interact.option_max_chars 为 {interact.OptionMaxChars}，选项文本会被截成空串。");
+
+        if (interact.AllowInputInjection)
+        {
+            if (!interact.HasIntRange)
+                diag.Add("interact.allow_input_injection 已开启，但 input_int_range 未声明合法区间（需写成 [min, max]），整数注入仍会被拒绝。");
+            if (interact.InputStrMaxChars <= 0)
+                diag.Add("interact.allow_input_injection 已开启，但 input_str_max_chars 未声明，字符串注入仍会被拒绝。");
+        }
+
+        if (interact.AllowedCommands == null || interact.AllowedCommands.Count == 0)
+        {
+            if (interact.Enabled)
+                diag.Add("interact.allowed_commands 为空，AI 无命令可触发（仍可提出选项）。");
+            return;
+        }
+
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (Interact.AiInteractCommand c in interact.AllowedCommands)
+        {
+            if (c == null)
+            {
+                diag.Add("interact.allowed_commands 里有一项为空，已忽略。");
+                continue;
+            }
+            if (string.IsNullOrWhiteSpace(c.Command))
+            {
+                diag.Add("interact.allowed_commands 有一项缺少 command 名，AI 无法引用它。");
+                continue;
+            }
+            if (!names.Add(c.Command))
+                diag.Add($"interact.allowed_commands 的 command 名重复：{c.Command}，后一条永远不会被选中。");
+            if (!c.Value.HasValue && string.IsNullOrEmpty(c.Input))
+                diag.Add($"interact 命令 {c.Command} 既没有 value 也没有 input，触发时会往引擎喂一个空输入。");
+            if (c.Value.HasValue && !string.IsNullOrEmpty(c.Input))
+                diag.Add($"interact 命令 {c.Command} 同时写了 value 与 input，实际只会用 value。");
+            if (!c.Value.HasValue && c.Input != null && (c.Input.Contains('\n') || c.Input.Contains('\r')))
+                diag.Add($"interact 命令 {c.Command} 的 input 含换行，引擎会拆成多段输入依次喂入（一条命令推进多步流程）。");
+        }
     }
 
     /// <summary>

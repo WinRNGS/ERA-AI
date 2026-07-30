@@ -1,5 +1,7 @@
-﻿using MinorShift.Emuera.AI;
+using MinorShift.Emuera.AI;
 using MinorShift.Emuera.AI.Compute;
+using MinorShift.Emuera.AI.Context;
+using MinorShift.Emuera.AI.Interact;
 using MinorShift.Emuera.AI.Traits;
 using System;
 using System.Collections.Generic;
@@ -26,6 +28,13 @@ internal sealed partial class MainWindow
     private ToolStripMenuItem aiComputeLogMenuItem;
     private ToolStripMenuItem aiManualEditMenuItem;
     private ToolStripMenuItem aiUndoComputeMenuItem;
+    private ToolStripMenuItem aiInteractDiagMenuItem;
+    private ToolStripMenuItem aiShowActionMenuItem;
+    private ToolStripMenuItem aiRunActionMenuItem;
+    private ToolStripMenuItem aiDropActionMenuItem;
+    private ToolStripMenuItem aiDropRoundMenuItem;
+    private ToolStripMenuItem aiContextInfoMenuItem;
+    private ToolStripMenuItem aiEndpointInfoMenuItem;
 
     private SplitContainer aiSplitContainer;
     private AiPanel aiPanel;
@@ -73,9 +82,33 @@ internal sealed partial class MainWindow
         aiUndoComputeMenuItem = new ToolStripMenuItem("撤销上轮数值结算");
         aiUndoComputeMenuItem.Click += AiUndoComputeMenuItem_Click;
 
+        // P4 交互控制。诊断项与 compute 的「预览副 API 请求」同一用途：
+        // 配 interact 段时必须看得见"哪条命令被剔了、当前引擎能不能接受注入"。
+        aiInteractDiagMenuItem = new ToolStripMenuItem("预览交互契约");
+        aiInteractDiagMenuItem.Click += AiInteractDiagMenuItem_Click;
+
+        aiShowActionMenuItem = new ToolStripMenuItem("显示待执行动作");
+        aiShowActionMenuItem.Click += AiShowActionMenuItem_Click;
+
+        aiRunActionMenuItem = new ToolStripMenuItem("执行待执行动作") { Enabled = false };
+        aiRunActionMenuItem.Click += AiRunActionMenuItem_Click;
+
+        aiDropActionMenuItem = new ToolStripMenuItem("放弃待执行动作") { Enabled = false };
+        aiDropActionMenuItem.Click += AiDropActionMenuItem_Click;
+
+        aiDropRoundMenuItem = new ToolStripMenuItem("丢弃最后一轮对话");
+        aiDropRoundMenuItem.Click += AiDropRoundMenuItem_Click;
+
+        aiContextInfoMenuItem = new ToolStripMenuItem("显示上下文压缩状态");
+        aiContextInfoMenuItem.Click += AiContextInfoMenuItem_Click;
+
+        aiEndpointInfoMenuItem = new ToolStripMenuItem("显示 API 端点解析结果");
+        aiEndpointInfoMenuItem.Click += AiEndpointInfoMenuItem_Click;
+
         aiRootMenuItem = new ToolStripMenuItem("AI");
         aiRootMenuItem.DropDownItems.Add(aiTogglePanelMenuItem);
         aiRootMenuItem.DropDownItems.Add(aiSettingsMenuItem);
+        aiRootMenuItem.DropDownItems.Add(aiEndpointInfoMenuItem);
         aiRootMenuItem.DropDownItems.Add(new ToolStripSeparator());
         aiRootMenuItem.DropDownItems.Add(aiReloadTraitsMenuItem);
         aiRootMenuItem.DropDownItems.Add(aiPreviewPromptMenuItem);
@@ -86,11 +119,20 @@ internal sealed partial class MainWindow
         aiRootMenuItem.DropDownItems.Add(aiManualEditMenuItem);
         aiRootMenuItem.DropDownItems.Add(aiUndoComputeMenuItem);
         aiRootMenuItem.DropDownItems.Add(new ToolStripSeparator());
+        aiRootMenuItem.DropDownItems.Add(aiInteractDiagMenuItem);
+        aiRootMenuItem.DropDownItems.Add(aiShowActionMenuItem);
+        aiRootMenuItem.DropDownItems.Add(aiRunActionMenuItem);
+        aiRootMenuItem.DropDownItems.Add(aiDropActionMenuItem);
+        aiRootMenuItem.DropDownItems.Add(aiDropRoundMenuItem);
+        aiRootMenuItem.DropDownItems.Add(new ToolStripSeparator());
+        aiRootMenuItem.DropDownItems.Add(aiContextInfoMenuItem);
+        aiRootMenuItem.DropDownItems.Add(new ToolStripSeparator());
         aiRootMenuItem.DropDownItems.Add(aiSelfTestMenuItem);
         aiRootMenuItem.DropDownItems.Add(aiAbortMenuItem);
         aiRootMenuItem.DropDownItems.Add(new ToolStripSeparator());
         aiRootMenuItem.DropDownItems.Add(aiShowLogMenuItem);
 
+        aiRootMenuItem.Overflow = ToolStripItemOverflow.Never;
         menuStrip.Items.Insert(menuStrip.Items.Count - 1, aiRootMenuItem);
 
         AiDispatcher.TurnCompleted += AiDispatcher_TurnCompleted;
@@ -174,6 +216,33 @@ internal sealed partial class MainWindow
 
         aiSplitContainer.Panel2Collapsed = true;
         aiPanelVisible = false;
+    }
+
+    /// <summary>
+    /// 打印实际会被请求的地址。
+    ///
+    /// 存在理由：配置里存的端点和真正 POST 出去的地址不一定相同——只填 base 时会被补全成
+    /// /v1/chat/completions。两者不一致时，"设置里看着没错但请求打到了别处"是排查真实链路
+    /// 最容易卡住的一步，所以要能一眼看到补全后的结果。
+    /// </summary>
+    private void AiEndpointInfoMenuItem_Click(object sender, EventArgs e)
+    {
+        if (console == null)
+            return;
+
+        console.PrintSingleLine("---- AI 端点解析 ----");
+        console.PrintSingleLine($"[主API] 配置值：{AiConfig.ApiEndpoint}");
+        console.PrintSingleLine($"[主API] 实际请求：{AiBackend.DeriveChatUrl(AiConfig.ApiEndpoint)}");
+        console.PrintSingleLine($"[主API] 模型：{AiConfig.Model}　密钥：{(AiConfig.HasApiKey ? "已设置" : "未设置")}");
+        console.PrintSingleLine($"[主API] 就绪：{(AiConfig.IsReady(out string mainReason) ? "是" : $"否（{mainReason}）")}");
+        console.PrintSingleLine($"[副API] 配置值：{AiConfig.ComputeApiEndpoint}");
+        console.PrintSingleLine($"[副API] 实际请求：{AiBackend.DeriveChatUrl(AiConfig.ComputeApiEndpoint)}");
+        console.PrintSingleLine($"[副API] 模型：{AiConfig.ComputeModel}");
+        console.PrintSingleLine($"[副API] 就绪：{(AiConfig.IsComputeReady(out string computeReason) ? "是" : $"否（{computeReason}）")}");
+        console.PrintSingleLine($"[词条] UseTraitPrompt={AiConfig.UseTraitPrompt}");
+        console.PrintSingleLine("提示：菜单里的「发起测试请求(P0 假数据)」不发网络请求，");
+        console.PrintSingleLine("　　　要验证真实往返必须在 AI 面板输入台词后点「发送」。");
+        console.RefreshStrings(true);
     }
 
     private void AiReloadTraitsMenuItem_Click(object sender, EventArgs e)
@@ -376,6 +445,124 @@ internal sealed partial class MainWindow
         console.RefreshStrings(true);
     }
 
+    /// <summary>
+    /// 交互契约预览。配 interact 段时必须先看这个：
+    /// 哪些命令真的可用、当前引擎在等哪种输入、自由注入是否已开放，都在这里一次看全。
+    /// 不发网络请求。
+    /// </summary>
+    private void AiInteractDiagMenuItem_Click(object sender, EventArgs e)
+    {
+        if (console == null)
+            return;
+
+        console.PrintSingleLine("---- 交互契约预览（不发送） ----");
+        AiInteractTemplate interact = AiTraitLibrary.InteractTemplate;
+        if (interact == null)
+        {
+            console.PrintSingleLine("[AI] 词条库里没有 interact 段，AI 无法提出选项或触发命令。");
+            console.RefreshStrings(true);
+            return;
+        }
+
+        console.PrintSingleLine($"[AI] enabled = {interact.Enabled}｜auto_execute = {interact.AutoExecute}"
+            + $"｜选项上限 {interact.MaxOptions} 条 / {interact.OptionMaxChars} 字");
+        console.PrintSingleLine($"[AI] 自由输入注入 = {(interact.AllowInputInjection ? "已开放" : "已关闭")}"
+            + $"｜整数区间 {(interact.HasIntRange ? $"[{interact.IntRangeMin}, {interact.IntRangeMax}]" : "未声明")}"
+            + $"｜字符串上限 {(interact.InputStrMaxChars > 0 ? interact.InputStrMaxChars.ToString() : "未声明")}");
+
+        if (interact.AllowedCommands == null || interact.AllowedCommands.Count == 0)
+        {
+            console.PrintSingleLine("[AI] allowed_commands 为空，AI 无命令可触发（仍可提出选项）。");
+        }
+        else
+        {
+            foreach (AiInteractCommand c in interact.AllowedCommands)
+            {
+                if (c == null)
+                    continue;
+                string payload = c.IsIntPayload ? $"数值 {c.Value}" : $"文本「{c.Input}」";
+                console.PrintSingleLine($"[AI] 命令 {c.Command} → {payload}"
+                    + (string.IsNullOrWhiteSpace(c.Description) ? "" : $"｜说明 {c.Description}"));
+            }
+        }
+
+        // 引擎状态层的实时判断。这一段是最容易被误解的地方：
+        // 契约写对了但引擎不在等输入时，动作照样一个都执行不了。
+        console.PrintSingleLine($"[AI] 引擎当前{(console.IsWaitInputState ? "" : "不")}在等待输入"
+            + (console.IsWaitInputState ? $"，类型 {console.NowInputType}"
+                + (console.IsWaintingOnePhrase ? "（单字符）" : "") : "（此时交互 schema 不会下发给模型）"));
+
+        foreach (string line in AiTraitLibrary.Diagnostics)
+        {
+            if (line.Contains("interact", StringComparison.OrdinalIgnoreCase))
+                console.PrintSingleLine($"[静态校验] {line}");
+        }
+        console.RefreshStrings(true);
+    }
+
+    private void AiShowActionMenuItem_Click(object sender, EventArgs e)
+    {
+        if (console == null)
+            return;
+        AiPendingAction action = AiDispatcher.PendingAction;
+        if (action == null)
+        {
+            console.PrintSingleLine("[AI] 当前没有待执行的交互动作。");
+            console.RefreshStrings(true);
+            return;
+        }
+        console.PrintSingleLine($"[AI] 待执行动作：{action.Description}（轮次 {action.TurnId}）");
+        console.PrintSingleLine($"[AI] 实际会喂给引擎的载荷：「{action.Payload}」（{(action.IsIntPayload ? "数值型" : "文本型")}）");
+        if (!string.IsNullOrWhiteSpace(action.Reason))
+            console.PrintSingleLine($"[AI] 模型自述理由：{action.Reason}");
+        if (!AiActionExecutor.IsEngineReady(console, action, out string why))
+            console.PrintSingleLine($"[AI] 现在还执行不了：{why}");
+        else
+            console.PrintSingleLine("[AI] 引擎状态就绪，可以执行。");
+        console.RefreshStrings(true);
+    }
+
+    private void AiRunActionMenuItem_Click(object sender, EventArgs e)
+    {
+        if (console == null)
+            return;
+        if (!AiDispatcher.TryExecutePendingAction(console, out string error))
+        {
+            console.PrintSingleLine($"[AI] 执行失败：{error}");
+            console.RefreshStrings(true);
+            UpdateAiMenuState();
+            return;
+        }
+        UpdateAiMenuState();
+    }
+
+    private void AiDropActionMenuItem_Click(object sender, EventArgs e)
+    {
+        if (console == null)
+            return;
+        console.PrintSingleLine(AiDispatcher.TryDiscardPendingAction(out string error)
+            ? "[AI] 已放弃待执行动作，流程未推进。"
+            : $"[AI] {error}");
+        console.RefreshStrings(true);
+        UpdateAiMenuState();
+    }
+
+    /// <summary>
+    /// 丢弃最后一轮对话。成对移除 user + assistant，且**不动已写入的数值**。
+    /// 想撤数值请用「撤销上轮数值结算」——两件事分开做，否则玩家只想删一段文字
+    /// 却连数值一起被改了。
+    /// </summary>
+    private void AiDropRoundMenuItem_Click(object sender, EventArgs e)
+    {
+        if (console == null)
+            return;
+        console.PrintSingleLine(AiDispatcher.TryDropLastRound(out string error)
+            ? "[AI] 已丢弃最后一轮对话（含玩家输入与 AI 回复）。已写入的数值未受影响。"
+            : $"[AI] {error}");
+        console.RefreshStrings(true);
+        UpdateAiMenuState();
+    }
+
     /// <summary>预览用的角色号解析。与调度器同一套逻辑：TARGET 是登录号，现算现用。</summary>
     private long PreviewCharaNo(out string error)
     {
@@ -469,9 +656,46 @@ internal sealed partial class MainWindow
             }
             foreach (AiAppliedChange applied in result.ComputeApplied)
                 console.PrintSingleLine($"[AI] 副 API 已回写 {applied}");
+            foreach (AiOption option in result.Options)
+                console.PrintSingleLine($"[AI] 建议选项：{option.Label}");
+            if (result.ActionAutoExecuted)
+                console.PrintSingleLine($"[AI] 已自动执行动作：{result.PendingAction?.Description}");
+            else if (result.PendingAction != null)
+                console.PrintSingleLine($"[AI] 待执行动作：{result.PendingAction.Description}（在 AI 菜单或面板里执行）");
+            if (!string.IsNullOrEmpty(result.ActionSkipReason))
+                console.PrintSingleLine($"[AI] 交互内容未采用：{result.ActionSkipReason}");
             console.PrintSingleLine($"[AI] 完成，耗时 {result.ElapsedMs} 毫秒。");
         }
         console.RefreshStrings(true);
+    }
+
+    private void AiContextInfoMenuItem_Click(object sender, EventArgs e)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("=== 上下文压缩状态 ===");
+        sb.AppendLine();
+        sb.AppendLine($"上下文窗口：{AiContextCompressor.GetContextWindow()} token");
+        sb.AppendLine($"保留轮数：{AiContextCompressor.GetRetainRounds()}");
+        sb.AppendLine($"触发阈值：{AiContextCompressor.TriggerRatio:P0}");
+        sb.AppendLine($"当前会话轮数：{AiConversation.Count / 2}");
+        sb.AppendLine($"当前估算 token：{AiContextCompressor.EstimateCurrentTokens("", "")}");
+        sb.AppendLine($"有摘要：{(AiContextCompressor.HasSummary ? "是" : "否")}");
+        if (AiContextCompressor.HasSummary)
+        {
+            string sum = AiContextCompressor.Summary;
+            sb.AppendLine($"摘要长度：{sum.Length} 字");
+            sb.AppendLine($"摘要预览：{(sum.Length > 200 ? sum[..200] + "…" : sum)}");
+        }
+        var info = AiContextCompressor.LastCompressInfo;
+        if (info != null)
+        {
+            sb.AppendLine();
+            sb.AppendLine($"最近压缩时间：{info.Timestamp:HH:mm:ss}");
+            sb.AppendLine($"压缩轮数：{info.CompressedRounds}");
+            sb.AppendLine($"摘要字数：{info.SummaryLength}");
+            sb.AppendLine($"成功：{info.Success}");
+        }
+        MessageBox.Show(sb.ToString(), "上下文压缩状态", MessageBoxButtons.OK, MessageBoxIcon.Information);
     }
 
     private void UpdateAiMenuState()
@@ -490,5 +714,14 @@ internal sealed partial class MainWindow
                 && AiDispatcher.PendingTransaction == null
                 && info != null && info.Applied.Count > 0 && !info.Undone;
         }
+
+        AiPendingAction action = AiDispatcher.PendingAction;
+        bool hasAction = action != null && !action.Consumed;
+        if (aiRunActionMenuItem != null)
+            aiRunActionMenuItem.Enabled = hasAction && !locked;
+        if (aiDropActionMenuItem != null)
+            aiDropActionMenuItem.Enabled = hasAction;
+        if (aiDropRoundMenuItem != null)
+            aiDropRoundMenuItem.Enabled = !locked && AiDispatcher.Messages.Count > 0;
     }
 }

@@ -1,4 +1,7 @@
 ﻿using MinorShift.Emuera.AI.Compute;
+using MinorShift.Emuera.AI.Context;
+using MinorShift.Emuera.AI.Interact;
+using MinorShift.Emuera.AI.Security;
 using MinorShift.Emuera.AI.Traits;
 using MinorShift.Emuera.GameView;
 using System;
@@ -58,9 +61,14 @@ internal static class AiDispatcher
     /// <summary>最近一次副 API 往返的观测信息。界面线程读写。</summary>
     public static AiComputeTurnInfo LastComputeInfo { get; private set; }
 
-    private static readonly object historyGate = new();
-    private static readonly List<ChatMessage> conversationHistory = [];
-    private const int MaxHistoryRounds = 20;
+    /// <summary>
+    /// P4：本轮通过校验、等待执行的交互指令。只在界面线程读写。
+    ///
+    /// 与 PendingTransaction 一样只保留一份，但两者的语义不同：事务是「已经写下去了、必须处置」，
+    /// 待执行动作是「还没做、可以不做」。所以它不拦新请求——发新请求时直接作废掉即可，
+    /// 因为放弃一个没执行的动作不会留下任何不一致状态。
+    /// </summary>
+    public static AiPendingAction PendingAction { get; private set; }
 
     /// <summary>
     /// 数值已写入但叙事失败时留下的待处置事务（RISK-05）。
@@ -78,21 +86,24 @@ internal static class AiDispatcher
     }
 
     /// <summary>获取对话历史的只读快照。</summary>
-    public static IReadOnlyList<ChatMessage> History
-    {
-        get
-        {
-            lock (historyGate)
-                return conversationHistory.ToArray();
-        }
-    }
+    public static IReadOnlyList<ChatMessage> History => AiConversation.ToChatMessages();
 
-    /// <summary>清空对话历史。副 API 的短记忆一并清掉，否则两边窗口会错位。</summary>
+    /// <summary>带 id 的会话历史快照（P4）。引用与编辑都要按 id 定位。</summary>
+    public static IReadOnlyList<AiMessage> Messages => AiConversation.All;
+
+    /// <summary>
+    /// 清空对话历史。副 API 的短记忆与引用栏一并清掉。
+    ///
+    /// 短记忆必须一起清：两边不同步会让副 API 看到主 API 已经忘掉的剧情。
+    /// 引用栏也必须一起清：引用指向的消息全没了，留着只会把一段无主的旧文本
+    /// 拼进下一轮输入，而模型完全无法判断那段话的来历。
+    /// </summary>
     public static void ClearHistory()
     {
-        lock (historyGate)
-            conversationHistory.Clear();
+        AiConversation.Clear();
         AiComputeMemory.Clear();
+        AiQuoteBox.Clear();
+        Context.AiContextCompressor.Clear();
     }
 
     private static void Append(string line)
@@ -130,6 +141,45 @@ internal static class AiDispatcher
             return false;
         }
 
+        // 上一轮摆出来没执行的动作在这里作废。放弃一个还没执行的动作不留下任何不一致状态，
+        // 而留着它跨轮存在会更糟：面板上那句"触发命令：抚摸"早已不对应当前的剧情与引擎状态。
+        if (PendingAction != null)
+        {
+            Append($"新请求开始，作废上一轮未执行的动作（{PendingAction.Description}）");
+            PendingAction = null;
+        }
+
+        // 上一次被终止的记录到这里就没意义了：玩家已经用「发新请求」表达了处置意图。
+        LastAbortedTurn = null;
+
+        // P6：输入清洗。在取锁之后、组装引用之前对玩家原始输入做安全清洗。
+        // 不硬拦截（ERA 是 RP 游戏，用户有权说任何话），但做标记、转义与长度限制。
+        var sanitizeResult = AiInputSanitizer.Sanitize(userInput);
+        userInput = sanitizeResult.CleanText;
+        if (sanitizeResult.HasWarnings)
+        {
+            foreach (string warning in sanitizeResult.Warnings)
+                Append($"[P6-输入清洗] {warning}");
+        }
+        // 检测可疑 prompt injection 模式（仅记日志，不拦截）
+        if (AiInputSanitizer.DetectSuspiciousPatterns(userInput, out var detections))
+        {
+            foreach (string det in detections)
+                Append($"[P6-注入检测] {det}");
+        }
+
+        // 引用在这里定型：取快照、拼进本轮输入、清空引用栏。
+        // 必须在界面线程做（AiQuoteBox 只允许界面线程访问），也必须在取锁之后做——
+        // 取锁失败时不该把玩家攒好的引用清掉。
+        IReadOnlyList<AiQuote> quotes = AiQuoteBox.Quotes;
+        string composedInput = AiQuoteBox.Compose(userInput, quotes);
+        int quoteCount = quotes.Count;
+        if (quoteCount > 0)
+        {
+            AiQuoteBox.Clear();
+            Append($"本轮带上 {quoteCount} 条引用");
+        }
+
         Append($"请求开始 ticket={ticket} input={Truncate(userInput, 40)}");
 
         var stopwatch = Stopwatch.StartNew();
@@ -140,16 +190,35 @@ internal static class AiDispatcher
             try
             {
                 result = UseFakeBackend
-                    ? await RunFakeBackendAsync(ticket, userInput, token).ConfigureAwait(false)
-                    : await RunRealBackendAsync(console, ticket, userInput, token).ConfigureAwait(false);
+                    ? await RunFakeBackendAsync(ticket, composedInput, token).ConfigureAwait(false)
+                    : await RunRealBackendAsync(console, ticket, composedInput, token).ConfigureAwait(false);
+                result.QuoteCount = quoteCount;
+                result.RequestInput = composedInput;
             }
             catch (OperationCanceledException)
             {
-                result = new AiTurnResult { Ticket = ticket, Success = false, Aborted = true, ErrorMessage = "已被玩家终止" };
+                result = new AiTurnResult
+                {
+                    Ticket = ticket,
+                    TurnId = TurnIdOf(ticket),
+                    Success = false,
+                    Aborted = true,
+                    ErrorMessage = "已被玩家终止",
+                    RequestInput = composedInput,
+                    QuoteCount = quoteCount,
+                };
             }
             catch (Exception e)
             {
-                result = new AiTurnResult { Ticket = ticket, Success = false, ErrorMessage = e.Message };
+                result = new AiTurnResult
+                {
+                    Ticket = ticket,
+                    TurnId = TurnIdOf(ticket),
+                    Success = false,
+                    ErrorMessage = e.Message,
+                    RequestInput = composedInput,
+                    QuoteCount = quoteCount,
+                };
             }
             result.ElapsedMs = stopwatch.ElapsedMilliseconds;
             CompleteOnUiThread(console, result);
@@ -210,12 +279,21 @@ internal static class AiDispatcher
                 result.Aborted = true;
                 // 终止的语义是「这一轮不算发生过」，所以副 API 已经写下的数值必须撤回。
                 RollbackIfNeeded(result, "请求已终止");
+                // 待执行动作同样属于「这一轮」的产物，必须一并作废。
+                // 数值都退回去了还留着一个动作，等于让玩家去推进一个已经不存在的剧情。
+                DropPendingActionOnAbort(result, "请求已终止");
+                // 留一份记录，让「丢弃 / 保留部分 / 重试」三条处置都有据可依（设计文档 S3.4.2）。
+                // 默认处置是丢弃，所以这里什么都不写进历史——记录只是让另外两条走得通。
+                RecordAbortedTurn(result);
                 Append($"请求终止 ticket={result.Ticket}，未留下数值变更");
                 return;
             }
 
             if (!result.Success)
             {
+                // 正文都没拿到就没有"本轮剧情"，动作失去依据，一律作废。
+                // 注意数值不在这里回滚：数值已落盘时走的是待处置事务（RISK-05），由玩家处置。
+                DropPendingActionOnAbort(result, "本轮请求失败");
                 Append($"请求失败 ticket={result.Ticket}：{result.ErrorMessage}");
                 return;
             }
@@ -239,6 +317,12 @@ internal static class AiDispatcher
         finally
         {
             AiRequestLock.Release(result.Ticket);
+
+            // 自动执行必须在 Release 之后：锁定期间引擎的全部输入入口一律拒绝
+            // （AiRequestLock 旁路 4），在锁内调用 PressEnterKey 会静默返回，
+            // 表现为"日志说执行了但什么都没发生"。
+            TryAutoExecute(console, result);
+
             try
             {
                 TurnCompleted?.Invoke(result);
@@ -248,6 +332,130 @@ internal static class AiDispatcher
                 Append($"完成通知异常：{e.Message}");
             }
         }
+    }
+
+    /// <summary>
+    /// 记下被终止的这一轮，供三条处置使用。必须在界面线程调用。
+    ///
+    /// 这里要顺手把已经记进历史的那一轮撤出来。存在这种竞态：主 API 已经返回、
+    /// RunRealBackendAsync 已经调过 RecordHistory，玩家的终止请求才落到界面线程。
+    /// 终止的语义是「这一轮不算发生过」——数值都退回去了，历史里却留着正文就自相矛盾，
+    /// 而且随后「保留部分」还会把同一段正文再加一遍。正文本身不会丢，它在 PartialText 里。
+    /// </summary>
+    private static void RecordAbortedTurn(AiTurnResult result)
+    {
+        if (result.IsRevision)
+            return;
+        if (result.AssistantMessageId != 0 && AiConversation.TryRemoveRound(result.AssistantMessageId, out _))
+        {
+            // 短记忆里那条摘要也要撤掉。留着等于告诉副 API「这段剧情已经结算过」，
+            // 而数值其实已经回滚，它下一轮会在一个不存在的结算基础上继续推演。
+            AiComputeMemory.TryRemoveLast(result.TurnId);
+            Append($"终止时撤出已记入历史的这一轮 id={result.AssistantMessageId}（正文保留在终止记录里）");
+        }
+        LastAbortedTurn = new AiAbortedTurn
+        {
+            Ticket = result.Ticket,
+            TurnId = result.TurnId,
+            UserInput = result.RequestInput,
+            // 非流式下这里通常为空。只有"正文已收到但终止请求先落地"的竞态里才有内容，
+            // 那时正文其实是完整的，因此「保留部分」并非无用的出路。
+            PartialText = result.NarrativeText,
+        };
+    }
+
+    /// <summary>作废本轮的待执行动作。必须在界面线程调用。</summary>
+    private static void DropPendingActionOnAbort(AiTurnResult result, string why)
+    {
+        if (PendingAction == null || PendingAction.Ticket != result.Ticket)
+            return;
+        Append($"{why}，作废本轮待执行动作（{PendingAction.Description}）");
+        PendingAction = null;
+        result.PendingAction = null;
+        result.ActionSkipReason = string.IsNullOrEmpty(result.ActionSkipReason)
+            ? $"{why}，本轮动作已作废"
+            : $"{result.ActionSkipReason}；{why}，本轮动作已作废";
+    }
+
+    /// <summary>
+    /// auto_execute = true 时立即执行本轮动作。必须在界面线程、且锁已释放之后调用。
+    ///
+    /// 默认关着（AiInteractTemplate.AutoExecute 默认 false）是有意的：数值写错能撤销，
+    /// 流程被推进无法撤销——ERA 没有流程级回退。愿意让 AI 自己开车的人再去打开它。
+    /// </summary>
+    private static void TryAutoExecute(EmueraConsole console, AiTurnResult result)
+    {
+        AiPendingAction action = result.PendingAction;
+        if (action == null || action.Consumed || PendingAction != action)
+            return;
+        AiInteractTemplate interact = AiTraitLibrary.InteractTemplate;
+        if (interact == null || !interact.Enabled || !interact.AutoExecute)
+            return;
+
+        if (!AiActionExecutor.TryExecute(console, action, out string error))
+        {
+            result.ActionSkipReason = string.IsNullOrEmpty(result.ActionSkipReason)
+                ? $"自动执行失败：{error}"
+                : $"{result.ActionSkipReason}；自动执行失败：{error}";
+            Append($"自动执行交互指令失败 ticket={result.Ticket}：{error}");
+            // 失败的动作留在 PendingAction 里，玩家可以修好状态后手动点「执行动作」。
+            // 但 Consumed 已被 TryExecute 置位的情况例外——那说明它已经喂进引擎了。
+            if (action.Consumed)
+                PendingAction = null;
+            return;
+        }
+
+        result.ActionAutoExecuted = true;
+        PendingAction = null;
+        Append($"已自动执行交互指令 ticket={result.Ticket}：{action.Description}");
+    }
+
+    /// <summary>
+    /// 玩家点「执行动作」。必须在界面线程调用。
+    ///
+    /// 执行前重新过一遍引擎状态层：从本轮收尾到玩家点下去可能过了很久，
+    /// 引擎早就换了状态。校验时能做的事，现在未必还能做。
+    /// </summary>
+    public static bool TryExecutePendingAction(EmueraConsole console, out string error)
+    {
+        error = null;
+        AiPendingAction action = PendingAction;
+        if (action == null)
+        {
+            error = "没有待执行的动作";
+            return false;
+        }
+        if (action.Consumed)
+        {
+            error = "这个动作已经执行过了";
+            PendingAction = null;
+            return false;
+        }
+        if (!AiActionExecutor.TryExecute(console, action, out error))
+        {
+            Append($"执行交互指令失败：{error}");
+            if (action.Consumed)
+                PendingAction = null;
+            return false;
+        }
+        PendingAction = null;
+        Append($"已执行交互指令：{action.Description}");
+        return true;
+    }
+
+    /// <summary>玩家放弃待执行动作。必须在界面线程调用。</summary>
+    public static bool TryDiscardPendingAction(out string error)
+    {
+        error = null;
+        AiPendingAction action = PendingAction;
+        if (action == null)
+        {
+            error = "没有待执行的动作";
+            return false;
+        }
+        PendingAction = null;
+        Append($"玩家放弃了待执行动作：{action.Description}");
+        return true;
     }
 
     /// <summary>
@@ -312,6 +520,33 @@ internal static class AiDispatcher
             return result;
         }
 
+        // ---------- P5：上下文压缩检测 ----------
+        // 在装配 messages 之前检测是否需要压缩。压缩成功后再装配，这样 BuildMessages 读到的
+        // 会话历史已经是压缩后的，不会超出窗口。压缩失败不阻断流程——退化为 P4 的硬截断行为。
+        bool contextEnabled = AiTraitLibrary.ContextTemplate?.Enabled ?? true;
+        if (contextEnabled && Context.AiContextCompressor.NeedsCompression(systemPrompt, userInput))
+        {
+            Append($"上下文压缩触发 ticket={ticket}");
+            try
+            {
+                var compressResult = await Context.AiContextCompressor.CompressAsync(
+                    action => InvokeOnUiThreadAsync(console, () => { action(); return true; }, token),
+                    token).ConfigureAwait(false);
+                if (compressResult.Success)
+                    Append($"上下文压缩完成：{compressResult.CompressedRounds} 轮 → {compressResult.SummaryChars} 字摘要");
+                else if (!string.IsNullOrEmpty(compressResult.SkipReason))
+                    Append($"上下文压缩跳过：{compressResult.SkipReason}");
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception e)
+            {
+                Append($"上下文压缩失败（不影响本轮请求）：{e.Message}");
+            }
+        }
+
         var messages = BuildMessages(userInput, systemPrompt, result.ComputeHint);
 
         // ---------- 阶段三：主 API 叙事 ----------
@@ -333,8 +568,10 @@ internal static class AiDispatcher
         {
             // RISK-05：数值已经落盘但正文没拿到。此时不能静默丢弃，也不宜自动回滚——
             // 回滚会让「已经发生的事」凭空消失。留一份待处置事务，由玩家选择重生成或回滚。
+            var aiError = AiErrorReporter.Classify(e, "主API叙事");
+            Append(AiErrorReporter.FormatDiagnostic(aiError, e));
             result.Success = false;
-            result.ErrorMessage = e.Message;
+            result.ErrorMessage = $"{aiError.UserMessage} {aiError.Suggestion}".Trim();
             if (result.ComputeApplied.Count > 0)
             {
                 result.NarrativeFailedAfterApply = true;
@@ -357,7 +594,7 @@ internal static class AiDispatcher
             return result;
         }
 
-        RecordHistory(userInput, response);
+        result.AssistantMessageId = RecordHistory(result.TurnId, userInput, response);
         AiComputeMemory.Add(result.TurnId, userInput, AiComputeApplier.Summarize(result.ComputeApplied));
 
         result.Success = true;
@@ -394,7 +631,10 @@ internal static class AiDispatcher
                 info.SkipReason = charaError;
                 return null;
             }
-            AiComputeRequest built = AiComputeRequestBuilder.Build(charaNo, userInput, ticket, out string buildError);
+            // engineWaitingInput 必须在界面线程现读：它决定本轮要不要把交互 schema 下发给模型。
+            // 引擎没在等输入时下发，只会诱导模型编一个必定在执行阶段被拒的动作。
+            AiComputeRequest built = AiComputeRequestBuilder.Build(
+                charaNo, userInput, ticket, console.IsWaitInputState, out string buildError);
             if (built == null)
                 info.SkipReason = buildError;
             return built;
@@ -444,15 +684,28 @@ internal static class AiDispatcher
         token.ThrowIfCancellationRequested();
 
         // 校验与回写必须在界面线程：要读旧值、要写变量。
+        // 交互指令的契约层与引擎状态层校验一并放在这一跳里——它同样要读引擎状态，
+        // 而且合在一次往返里可以保证「数值与动作出自同一时刻的引擎状态」。
         var outcome = await InvokeOnUiThreadAsync(console, () =>
         {
             bool ok = AiComputeApplier.TryApply(request, parsed, out List<AiAppliedChange> applied, out string applyError);
-            return new ApplyOutcome { Ok = ok, Applied = applied, Error = applyError };
+            var made = new ApplyOutcome { Ok = ok, Applied = applied, Error = applyError };
+            ResolveInteractOnUiThread(console, request, parsed, ticket, made);
+            return made;
         }, token).ConfigureAwait(false);
 
         result.ComputeWarnings = parsed.Warnings;
         info.Warnings = parsed.Warnings;
         info.NarrativeHint = parsed.NarrativeHint;
+
+        // 交互产物与数值互不牵连：数值被整批拒绝时选项和动作照样成立，反之亦然。
+        result.Options = outcome.Options;
+        result.OptionNote = outcome.OptionNote;
+        result.PendingAction = outcome.Action;
+        result.ActionSkipReason = outcome.ActionSkipReason;
+        info.Options = outcome.Options;
+        info.ActionDescription = outcome.Action?.Description;
+        info.ActionSkipReason = outcome.ActionSkipReason;
 
         if (!outcome.Ok)
         {
@@ -473,6 +726,78 @@ internal static class AiDispatcher
         public bool Ok;
         public List<AiAppliedChange> Applied = [];
         public string Error;
+
+        /// <summary>P4：清洗后的选项。</summary>
+        public List<AiOption> Options = [];
+
+        public string OptionNote;
+
+        /// <summary>P4：通过契约层与引擎状态层校验的待执行动作。</summary>
+        public AiPendingAction Action;
+
+        public string ActionSkipReason;
+    }
+
+    /// <summary>
+    /// 交互产物的落地。必须在界面线程调用（要读引擎状态、要设 PendingAction）。
+    ///
+    /// 顺序是刻意的：先清洗选项（纯本地、不会失败），再校验动作。
+    /// 动作要过契约层 + 引擎状态层两道，且**此处一律不执行**——
+    /// 执行入口在锁定期间会拒绝一切输入（AiRequestLock 旁路 4），
+    /// 所以自动执行也必须推迟到锁释放之后（见 ApplyOnUiThread）。
+    /// </summary>
+    private static void ResolveInteractOnUiThread(
+        EmueraConsole console, AiComputeRequest request, AiComputeResult parsed, long ticket, ApplyOutcome outcome)
+    {
+        AiInteractTemplate interact = request.Interact;
+
+        // 本轮没把交互 schema 下发给模型，却收到了交互内容：说明模型在自作主张。
+        // 一律不采纳，并把这件事说出来——静默丢弃会让人以为"模型从不提交互建议"。
+        if (!request.InteractEnabled)
+        {
+            if (parsed.Options.Count > 0 || parsed.Action != null)
+            {
+                outcome.ActionSkipReason = "本轮未开放交互指令（interact 段未启用或引擎不在等待输入），模型给出的交互内容已忽略";
+                Append($"忽略本轮交互内容 ticket={ticket}：未开放交互指令");
+            }
+            return;
+        }
+
+        outcome.Options = AiActionExecutor.Sanitize(interact, parsed.Options, out string optionNote);
+        outcome.OptionNote = optionNote;
+
+        var reasons = new List<string>();
+        if (!string.IsNullOrEmpty(parsed.InteractNote))
+            reasons.Add(parsed.InteractNote);
+
+        if (parsed.Action != null)
+        {
+            if (!AiActionExecutor.TryValidate(interact, parsed.Action, request.TurnId, ticket,
+                    out AiPendingAction pending, out string validateError))
+            {
+                reasons.Add(validateError);
+                Append($"交互指令未通过契约层 ticket={ticket}：{validateError}");
+            }
+            else if (pending != null)
+            {
+                // 引擎状态层。这里就检查而不是等到执行时，是为了让面板能立刻说明
+                // 「模型提了动作但现在做不了」，而不是摆一个点下去必然失败的按钮。
+                if (!AiActionExecutor.IsEngineReady(console, pending, out string engineError))
+                {
+                    reasons.Add(engineError);
+                    Append($"交互指令未通过引擎状态层 ticket={ticket}：{engineError}");
+                }
+                else
+                {
+                    outcome.Action = pending;
+                    PendingAction = pending;
+                    Append($"交互指令待执行 ticket={ticket}：{pending.Description}");
+                }
+            }
+        }
+
+        if (reasons.Count > 0)
+            outcome.ActionSkipReason = string.Join("；", reasons);
     }
 
     /// <summary>
@@ -514,7 +839,7 @@ internal static class AiDispatcher
                 string response = MainBackendOverride != null
                     ? MainBackendOverride(messages)
                     : await AiBackend.ChatAsync(messages, token).ConfigureAwait(false);
-                RecordHistory(pending.UserInput, response);
+                result.AssistantMessageId = RecordHistory(pending.TurnId, pending.UserInput, response);
                 AiComputeMemory.Add(pending.TurnId, pending.UserInput, AiComputeApplier.Summarize(pending.Applied));
                 result.Success = true;
                 result.NarrativeText = response;
@@ -542,6 +867,334 @@ internal static class AiDispatcher
             CompleteOnUiThread(console, result);
         });
 
+        return true;
+    }
+
+    /// <summary>
+    /// 被终止的那一轮。终止后的三条处置（丢弃 / 保留部分 / 重试）都要用它。
+    /// 只在界面线程读写。与 PendingTransaction 不同，它**不拦新请求**——
+    /// 默认处置就是"丢弃"，不处置也不会留下任何不一致状态。
+    /// </summary>
+    public static AiAbortedTurn LastAbortedTurn { get; private set; }
+
+    /// <summary>
+    /// 终止处置·保留部分：把已接收到的不完整正文写进历史，标注为「被中断」。
+    /// 必须在界面线程调用。
+    ///
+    /// 非流式下这一条只在竞态里有用：正文已经收到、但玩家的终止请求先落地。
+    /// 那时正文其实是完整的，丢掉它反而更可惜，所以保留这条出路。
+    /// 标注 Interrupted 是为了让上下文里能看出"这一段是被打断的"，
+    /// 否则模型会把一段可能截断的文字当成完整叙事往下接。
+    /// </summary>
+    public static bool TryKeepAbortedPartial(out string error)
+    {
+        error = null;
+        AiAbortedTurn aborted = LastAbortedTurn;
+        if (aborted == null)
+        {
+            error = "没有被终止的回合";
+            return false;
+        }
+        if (string.IsNullOrWhiteSpace(aborted.PartialText))
+        {
+            error = "这一轮终止时还没有收到任何正文，没有可保留的内容";
+            return false;
+        }
+        if (aborted.Handled)
+        {
+            error = "这一轮已经处置过了";
+            return false;
+        }
+
+        (AiMessage _, AiMessage assistant) = AiConversation.AddRound(
+            aborted.TurnId, aborted.UserInput, aborted.PartialText);
+        assistant.Interrupted = true;
+        aborted.Handled = true;
+        // 数值在终止时已经回滚，所以短记忆里要写明"这一轮被打断且数值未变"，
+        // 否则副 API 会以为这段剧情已经结算过。
+        AiComputeMemory.Add(aborted.TurnId, aborted.UserInput, "这一轮被玩家中断，正文不完整，数值未变");
+        Append($"保留被终止的正文（{aborted.PartialText.Length} 字，已标注为被中断）");
+        return true;
+    }
+
+    /// <summary>
+    /// 终止处置·重试：以完全相同的输入重新发一轮。必须在界面线程调用。
+    ///
+    /// 复用原轮次的输入（含引用前缀）而不是让玩家重敲：引用栏在发出时就已清空，
+    /// 重敲的内容与被终止的那一轮不是同一个请求。
+    /// 副 API 会重新跑一遍——它的数值在终止时已经回滚，所以这不是重复结算。
+    /// </summary>
+    public static bool TryRetryAbortedTurn(EmueraConsole console, out string error)
+    {
+        error = null;
+        AiAbortedTurn aborted = LastAbortedTurn;
+        if (aborted == null)
+        {
+            error = "没有被终止的回合";
+            return false;
+        }
+        if (aborted.Handled)
+        {
+            error = "这一轮已经处置过了";
+            return false;
+        }
+        if (string.IsNullOrWhiteSpace(aborted.UserInput))
+        {
+            error = "被终止的那一轮没有留下输入，无法重试";
+            return false;
+        }
+        if (!TryBeginTurn(console, aborted.UserInput))
+        {
+            error = "无法重试（已有请求进行中或存在未处置事务）";
+            return false;
+        }
+        aborted.Handled = true;
+        Append($"重试被终止的一轮：{Truncate(aborted.UserInput, 40)}");
+        return true;
+    }
+
+    /// <summary>终止处置·丢弃（默认）。只是把记录清掉，本来就没写进任何地方。</summary>
+    public static bool TryDiscardAbortedTurn(out string error)
+    {
+        error = null;
+        if (LastAbortedTurn == null)
+        {
+            error = "没有被终止的回合";
+            return false;
+        }
+        LastAbortedTurn = null;
+        Append("已丢弃被终止的那一轮，会话历史未变");
+        return true;
+    }
+
+    /// <summary>
+    /// 修改回复·模式 A：直接编辑某条 AI 回复的正文。必须在界面线程调用。
+    ///
+    /// **纯本地操作，不发网络请求，也绝不回滚已写入的数值。** 数值与正文是两条通道：
+    /// 玩家嫌这段文字写得不好而重写它，不该让存档跟着变；要撤数值请走「撤销上轮数值结算」。
+    /// 因为不发请求，所以锁定期间也允许（设计文档 S3.4.1：编辑历史 → IDLE）。
+    /// </summary>
+    public static bool TryEditResponse(long messageId, string newText, out string error)
+    {
+        if (!AiConversation.TryEditAssistant(messageId, newText, out error))
+        {
+            Append($"编辑回复失败：{error}");
+            return false;
+        }
+        Append($"已编辑回复 id={messageId}（{newText.Length} 字），数值未受影响");
+        return true;
+    }
+
+    /// <summary>
+    /// 修改回复·模式 B：带修改指令重新生成最后一条 AI 回复。必须在界面线程调用。
+    ///
+    /// 与「重生成」（TryRegenerateNarrative）的区别：那一条是 RISK-05 的补偿路径，
+    /// 只在数值已写入但正文失败时可用；这一条面向"正文拿到了但玩家不满意"，
+    /// 任何一轮之后都能用，且**同样不动已写入的数值**——重写的是叙述，不是已经发生的事。
+    ///
+    /// 实现上不新增一轮，而是就地替换那条 assistant 消息。否则历史里会留下
+    /// 一段"被否决的回复 + 一段修改要求"，模型下一轮会把那次否决也当成剧情的一部分。
+    /// </summary>
+    public static bool TryReviseLastResponse(EmueraConsole console, string instruction, out string error)
+    {
+        error = null;
+        if (console == null)
+        {
+            error = "引擎尚未就绪";
+            return false;
+        }
+        if (string.IsNullOrWhiteSpace(instruction))
+        {
+            error = "请先写下你希望怎么改";
+            return false;
+        }
+        if (PendingTransaction != null)
+        {
+            error = "存在未处置的待处置事务，请先处置它（重生成 / 回滚数值 / 保留数值）";
+            return false;
+        }
+
+        AiMessage assistant = AiConversation.LastAssistant();
+        if (assistant == null)
+        {
+            error = "还没有可修改的 AI 回复";
+            return false;
+        }
+        AiMessage user = AiConversation.UserOf(assistant);
+
+        long ticket = AiRequestLock.TryAcquire(console, out CancellationToken token);
+        if (ticket == 0)
+        {
+            error = "已有请求进行中";
+            return false;
+        }
+
+        // 历史里保留旧回复，让模型看得到"要改的是哪一段"；修改指令作为独立 system 消息
+        // 排在最后，明确要求只重写那一条，否则模型会把它当成新的剧情推进继续往下写。
+        var messages = new List<ChatMessage>();
+        string systemPrompt = BuildSystemPromptOnUiThread();
+        if (!string.IsNullOrWhiteSpace(systemPrompt))
+            messages.Add(new ChatMessage { Role = "system", Content = systemPrompt });
+        messages.AddRange(AiConversation.ToChatMessages());
+        messages.Add(new ChatMessage
+        {
+            Role = "system",
+            Content = "玩家对你上面最后一条回复不满意，要求重写它。"
+                + "请只重写那一条回复本身，不要继续推进剧情、不要复述玩家的要求、不要解释你改了什么。"
+                + "本轮已经结算的数值不会变，所以不要在重写时改变既定事实，只改叙述。"
+                + $"玩家的修改要求：{instruction.Trim()}",
+        });
+
+        long messageId = assistant.Id;
+        string oldText = assistant.Text;
+        var stopwatch = Stopwatch.StartNew();
+        Append($"带修改指令重生成 ticket={ticket} id={messageId} 指令={Truncate(instruction, 40)}");
+
+        _ = Task.Run(async () =>
+        {
+            var result = new AiTurnResult
+            {
+                Ticket = ticket,
+                TurnId = assistant.TurnId,
+                IsRevision = true,
+                AssistantMessageId = messageId,
+            };
+            try
+            {
+                string response = MainBackendOverride != null
+                    ? MainBackendOverride(messages)
+                    : await AiBackend.ChatAsync(messages, token).ConfigureAwait(false);
+                if (string.IsNullOrWhiteSpace(response))
+                    throw new InvalidOperationException("模型返回空正文，已保留原回复");
+                result.Success = true;
+                result.NarrativeText = response;
+            }
+            catch (OperationCanceledException)
+            {
+                result.Success = false;
+                result.Aborted = true;
+                result.ErrorMessage = "已被玩家终止";
+            }
+            catch (Exception e)
+            {
+                result.Success = false;
+                result.ErrorMessage = e.Message;
+            }
+            result.ElapsedMs = stopwatch.ElapsedMilliseconds;
+            CompleteRevisionOnUiThread(console, result, messageId, oldText, user?.Text);
+        });
+
+        return true;
+    }
+
+    /// <summary>
+    /// 修改回复的收尾。单独一条路径而不是复用 ApplyOnUiThread，因为语义不同：
+    /// 这里不写数值、不新增轮次、失败时必须原样保留旧回复。
+    /// </summary>
+    private static void CompleteRevisionOnUiThread(
+        EmueraConsole console, AiTurnResult result, long messageId, string oldText, string userText)
+    {
+        var window = console.Window;
+        if (window == null || !window.Created)
+        {
+            AiRequestLock.Release(result.Ticket);
+            return;
+        }
+
+        void Finish()
+        {
+            try
+            {
+                if (result.Ticket != AiRequestLock.CurrentTicket)
+                {
+                    Append($"丢弃过期的修改结果 ticket={result.Ticket}");
+                    return;
+                }
+                if (result.Aborted || AiRequestLock.IsAborting)
+                {
+                    result.Success = false;
+                    result.Aborted = true;
+                    Append($"修改回复被终止 ticket={result.Ticket}，原回复保持不变");
+                    return;
+                }
+                if (!result.Success)
+                {
+                    Append($"修改回复失败 ticket={result.Ticket}：{result.ErrorMessage}，原回复保持不变");
+                    return;
+                }
+                if (!AiConversation.TryReplaceAssistant(messageId, result.NarrativeText))
+                {
+                    // 消息在等待期间被淘汰或清空了。此时不新增一条，因为那会凭空多出
+                    // 一段没有对应玩家输入的 assistant 消息。
+                    result.Success = false;
+                    result.ErrorMessage = "原回复已不在对话历史里（可能已被清空），本次修改未采用";
+                    Append($"修改回复无法落地 ticket={result.Ticket}：{result.ErrorMessage}");
+                    return;
+                }
+                // 短记忆里补一条：副 API 下一轮看到的剧情摘要必须跟着改，
+                // 否则它会按被否决的那版叙事继续结算。
+                AiComputeMemory.Add($"{result.TurnId}_rev", userText ?? "（玩家要求重写上一条回复）",
+                    "玩家要求重写了上一条叙事，数值未变");
+                Append($"修改回复完成 ticket={result.Ticket} id={messageId}：{oldText?.Length ?? 0} 字 → {result.NarrativeText.Length} 字");
+            }
+            catch (Exception e)
+            {
+                result.Success = false;
+                result.ErrorMessage = e.Message;
+                Append($"修改回复收尾异常 ticket={result.Ticket}：{e.Message}");
+            }
+            finally
+            {
+                AiRequestLock.Release(result.Ticket);
+                try
+                {
+                    TurnCompleted?.Invoke(result);
+                }
+                catch (Exception e)
+                {
+                    Append($"完成通知异常：{e.Message}");
+                }
+            }
+        }
+
+        try
+        {
+            if (window.InvokeRequired)
+                window.BeginInvoke((Action)Finish);
+            else
+                Finish();
+        }
+        catch (Exception e)
+        {
+            Append($"修改回复回注调度失败：{e.Message}");
+            AiRequestLock.Release(result.Ticket);
+        }
+    }
+
+    /// <summary>
+    /// 丢弃最后一轮（user + assistant 成对移除）。必须在界面线程调用。
+    ///
+    /// 成对移除是必须的：只删 assistant 会留下一个没有回应的 user 消息，
+    /// 模型下一轮会把它读成"玩家说了话但我没理"，从而自行圆场。
+    /// 同样**不动已写入的数值**——要撤数值请走「撤销上轮数值结算」，两件事分开做。
+    /// </summary>
+    public static bool TryDropLastRound(out string error)
+    {
+        error = null;
+        if (AiRequestLock.IsLocked)
+        {
+            error = "请求进行中，等这一轮结束再丢弃";
+            return false;
+        }
+        AiMessage assistant = AiConversation.LastAssistant();
+        if (assistant == null)
+        {
+            error = "没有可丢弃的回合";
+            return false;
+        }
+        if (!AiConversation.TryRemoveRound(assistant.Id, out error))
+            return false;
+        Append($"已丢弃最后一轮对话（id={assistant.Id}），已写入的数值未受影响");
         return true;
     }
 
@@ -756,18 +1409,11 @@ internal static class AiDispatcher
 
     private static void SetLastComputeInfo(AiComputeTurnInfo info) => LastComputeInfo = info;
 
-    private static void RecordHistory(string userInput, string response)
+    /// <summary>记一轮往返，返回 assistant 消息的 id（供引用与编辑定位）。</summary>
+    private static long RecordHistory(string turnId, string userInput, string response)
     {
-        lock (historyGate)
-        {
-            conversationHistory.Add(new ChatMessage { Role = "user", Content = userInput });
-            conversationHistory.Add(new ChatMessage { Role = "assistant", Content = response });
-            while (conversationHistory.Count > MaxHistoryRounds * 2)
-            {
-                conversationHistory.RemoveAt(0);
-                conversationHistory.RemoveAt(0);
-            }
-        }
+        (AiMessage _, AiMessage assistant) = AiConversation.AddRound(turnId, userInput, response);
+        return assistant.Id;
     }
 
     private static string TurnIdOf(long ticket) => $"t_{ticket:D6}";
@@ -811,13 +1457,21 @@ internal static class AiDispatcher
     {
         var messages = new List<ChatMessage>();
 
+        // 装配顺序（设计文档）：词条 prompt + 数值状态 → 历史摘要 → 最近 M 轮原文 → 本轮输入
         if (!string.IsNullOrWhiteSpace(systemPrompt))
             messages.Add(new ChatMessage { Role = "system", Content = systemPrompt });
 
-        lock (historyGate)
+        // P5：历史摘要段。存在时插在历史原文之前，为模型提供早期剧情的压缩记忆。
+        if (Context.AiContextCompressor.HasSummary)
         {
-            messages.AddRange(conversationHistory);
+            messages.Add(new ChatMessage
+            {
+                Role = "system",
+                Content = $"【早期剧情摘要】{Context.AiContextCompressor.Summary.Trim()}",
+            });
         }
+
+        messages.AddRange(AiConversation.ToChatMessages());
 
         if (!string.IsNullOrWhiteSpace(computeHint))
         {
@@ -861,6 +1515,15 @@ internal sealed class AiComputeTurnInfo
     /// <summary>已写入的数值是否被玩家撤销过。防止重复撤销把更早的值当成"写入前"写回去。</summary>
     public bool Undone;
 
+    /// <summary>P4：本轮采纳的选项。</summary>
+    public List<AiOption> Options = [];
+
+    /// <summary>P4：本轮待执行动作的描述。为空表示没有动作。</summary>
+    public string ActionDescription;
+
+    /// <summary>P4：交互内容被丢弃的原因。</summary>
+    public string ActionSkipReason;
+
     public bool Used => SkipReason == null;
 }
 
@@ -877,4 +1540,26 @@ internal sealed class AiPendingTransaction
     public string ComputeHint;
     public List<AiAppliedChange> Applied = [];
     public string FailureReason;
+}
+
+/// <summary>
+/// 被终止的一轮（P4，设计文档 S3.4.2）。三条处置都从这里取原始材料。
+///
+/// 与 AiPendingTransaction 的区别是「是否留下了必须处置的状态」：
+/// 事务的数值已经落盘，不处置就会失去可撤回性，所以它硬拦新请求；
+/// 终止记录什么都没写下（数值已在终止时回滚），默认处置就是丢弃，因此不拦任何操作。
+/// </summary>
+internal sealed class AiAbortedTurn
+{
+    public long Ticket;
+    public string TurnId;
+
+    /// <summary>被终止那一轮实际送出的输入（含引用前缀）。重试时原样重发。</summary>
+    public string UserInput;
+
+    /// <summary>终止时已收到的正文。非流式下通常为空。</summary>
+    public string PartialText;
+
+    /// <summary>已经选过一条处置。防止「保留部分」之后又「重试」，把同一轮算两次。</summary>
+    public bool Handled;
 }

@@ -112,6 +112,11 @@ internal static class AiComputeParser
                 });
             }
 
+            // P4：交互建议。刻意放在 changes 之后、且不影响返回值——
+            // 交互是附加能力，写坏了顶多"这一轮没有选项/不推进流程"，
+            // 没有理由因此把已经合规的 changes 一起丢掉。
+            ParseInteract(root, result);
+
             return result;
         }
         catch (JsonException e)
@@ -119,6 +124,130 @@ internal static class AiComputeParser
             error = $"副 API 输出不是合法 JSON：{e.Message}";
             return null;
         }
+    }
+
+    /// <summary>
+    /// 解析 options 与 action。**任何失败都只是"这一部分不采用"，绝不让整批 changes 报废。**
+    ///
+    /// 这与 changes 的取向刻意相反。理由是后果不对等：changes 写进存档，一条离谱就说明模型
+    /// 这一轮的理解不可靠，采纳其余项等于赌运气；而选项只是界面按钮、动作还要过引擎状态层与
+    /// 玩家确认，最坏后果是"这一轮没推进流程"。为一条坏选项把已经算对的数值一起丢掉是亏的。
+    ///
+    /// 注意这里只做「JSON → 数据结构」，不做契约校验（命令是否在白名单、注入是否开放等）。
+    /// 那些必须在界面线程用当时的词条库判定，见 AiActionExecutor.TryValidate。
+    /// </summary>
+    private static void ParseInteract(JsonElement root, AiComputeResult result)
+    {
+        var notes = new List<string>();
+
+        if (root.TryGetProperty("options", out JsonElement options))
+        {
+            if (options.ValueKind == JsonValueKind.Array)
+            {
+                foreach (JsonElement item in options.EnumerateArray())
+                {
+                    // 允许两种形态：{"label": "..."} 与裸字符串。后者是模型常见的省事写法，
+                    // 语义毫无歧义，没必要因为形态不合就丢掉一条本来能用的选项。
+                    if (item.ValueKind == JsonValueKind.String)
+                    {
+                        string bare = item.GetString();
+                        if (!string.IsNullOrWhiteSpace(bare))
+                            result.Options.Add(new Interact.AiOption { Label = bare.Trim() });
+                        continue;
+                    }
+                    if (item.ValueKind != JsonValueKind.Object)
+                        continue;
+                    string label = ReadString(item, "label");
+                    if (string.IsNullOrWhiteSpace(label))
+                        continue;
+                    result.Options.Add(new Interact.AiOption
+                    {
+                        Label = label.Trim(),
+                        Hint = ReadString(item, "hint"),
+                    });
+                }
+            }
+            else if (options.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined))
+            {
+                notes.Add($"options 不是数组（实际 {options.ValueKind}），本轮选项已忽略");
+            }
+        }
+
+        if (root.TryGetProperty("action", out JsonElement action))
+        {
+            if (action.ValueKind == JsonValueKind.Object)
+            {
+                string kindText = ReadString(action, "kind");
+                // kind 缺失时按 none 处理而不是报错：没提出动作与提出"不动作"在语义上相同，
+                // 而"宁可不给"正是我们希望的默认行为。
+                if (!string.IsNullOrWhiteSpace(kindText))
+                {
+                    string kind = kindText.Trim().ToLowerInvariant();
+                    switch (kind)
+                    {
+                        case "none":
+                            break;
+                        case "command":
+                            {
+                                string command = ReadString(action, "command");
+                                if (string.IsNullOrWhiteSpace(command))
+                                {
+                                    notes.Add("action.kind = command 但没给 command 名，动作已忽略");
+                                    break;
+                                }
+                                result.Action = new Interact.AiActionRequest
+                                {
+                                    Kind = Interact.AiActionKind.Command,
+                                    Command = command.Trim(),
+                                    Reason = ReadString(action, "reason"),
+                                };
+                                break;
+                            }
+                        case "input_int":
+                            {
+                                if (!TryReadInt(action, "value", out long value))
+                                {
+                                    notes.Add("action.kind = input_int 但 value 不是整数，动作已忽略");
+                                    break;
+                                }
+                                result.Action = new Interact.AiActionRequest
+                                {
+                                    Kind = Interact.AiActionKind.InputInt,
+                                    Value = value,
+                                    Reason = ReadString(action, "reason"),
+                                };
+                                break;
+                            }
+                        case "input_str":
+                            {
+                                string text = ReadString(action, "text");
+                                if (string.IsNullOrWhiteSpace(text))
+                                {
+                                    notes.Add("action.kind = input_str 但 text 为空，动作已忽略");
+                                    break;
+                                }
+                                result.Action = new Interact.AiActionRequest
+                                {
+                                    Kind = Interact.AiActionKind.InputStr,
+                                    Text = text,
+                                    Reason = ReadString(action, "reason"),
+                                };
+                                break;
+                            }
+                        default:
+                            notes.Add($"action.kind 不认识（{kindText}），动作已忽略");
+                            break;
+                    }
+                }
+            }
+            else if (action.ValueKind is not (JsonValueKind.Null or JsonValueKind.Undefined))
+            {
+                notes.Add($"action 不是对象（实际 {action.ValueKind}），动作已忽略");
+            }
+        }
+
+        if (notes.Count > 0)
+            result.InteractNote = string.Join("；", notes);
     }
 
     private static string ReadString(JsonElement parent, string name)

@@ -1,0 +1,93 @@
+;===============================================================
+; VariableSize.csv —— 变量尺寸定义
+; 取自 伪eramaou_EX 的 VariableSize.csv，按测试需要裁剪。
+;
+; 两条容易踩的规则：
+;   1. *NAME 系列（从 CSV 读取的名称表）与对应的数据数组各自独立，
+;      要同时够大。TALENTNAME 小于 CSV 里的最大编号时，超出的行被静默丢弃。
+;   2. TRAIN.CSV 的编号必须小于 TRAINNAME 的长度，否则命令不会出现在列表里。
+;===============================================================
+
+;---------- 名称数组（从 CSV 读取的常量） ----------
+ITEMNAME,1000
+ABLNAME,110
+TALENTNAME,1000
+EXPNAME,100
+MARKNAME,100
+PALAMNAME,200
+TRAINNAME,100
+BASENAME,100
+SOURCENAME,100
+EXNAME,100
+EQUIPNAME,100
+TEQUIPNAME,100
+FLAGNAME,10000
+CFLAGNAME,1000
+TFLAGNAME,1000
+STRNAME,1000
+
+;---------- 全局整数 ----------
+DAY,1000
+MONEY,1000
+ITEM,1000
+FLAG,10000
+TFLAG,1000
+UP,1000
+DOWN,1000
+LOSEBASE,1000
+EJAC,1000
+PBAND,1000
+BOUGHT,1000
+ITEMSALES,1000
+PREVCOM,1000
+NEXTCOM,1000
+SELECTCOM,1000
+ASSIPLAY,1000
+TIME,1000
+RESULT,1000
+COUNT,1000
+TARGET,1000
+ASSI,1000
+MASTER,1000
+PLAYER,1000
+NOITEM,1000
+GLOBAL,1000
+
+;---------- 全局字符串 ----------
+STR,1000
+SAVESTR,100
+RESULTS,100
+GLOBALS,110
+TSTR,100
+
+;---------- 角色维度整数 ----------
+BASE,100
+MAXBASE,100
+ABL,110
+TALENT,1000
+EXP,100
+MARK,100
+PALAM,200
+SOURCE,100
+EX,100
+CFLAG,1000
+JUEL,200
+RELATION,1000
+EQUIP,100
+TEQUIP,100
+STAIN,100
+GOTJUEL,200
+NOWEX,100
+DOWNBASE,100
+CUP,100
+CDOWN,100
+TCVAR,100
+
+;---------- 角色维度字符串 ----------
+CSTR,100
+
+;---------- 局部 ----------
+LOCAL,1000
+LOCALS,100
+ARG,1000
+ARGS,1000

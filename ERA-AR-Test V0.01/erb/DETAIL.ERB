@@ -1,0 +1,219 @@
+;===============================================================
+; DETAIL.ERB —— 角色与数值查看／编辑
+;
+; 存在意义：把"AI 回写没生效"这个现象拆成两种可分辨的情况。
+;   ERB 能写、AI 不能写 → 问题在 ai_traits.json 的字段名或 target
+;   ERB 也不能写         → 问题在 CSV 定义或变量尺寸
+; 所以这里打印的字段与 ai_traits.json 引用的字段严格一一对应。
+;===============================================================
+
+;---------------------------------------------------------------
+; 当前对象详细状态
+;---------------------------------------------------------------
+@SHOW_TARGET_DETAIL
+PRINTL
+DRAWLINE
+PRINTFORML %NAME:TARGET% 的状态（登录号 {TARGET:0} / 番号 {NO:TARGET}）
+DRAWLINE
+PRINTFORML 呼称：%CALLNAME:TARGET%
+PRINTL
+PRINTL 【CFLAG —— 副 API 的主要写入目标】
+PRINTFORML 　好感度   = {CFLAG:TARGET:好感度}　（compute.writable_fields，0-100，单轮上限 10）
+PRINTFORML 　信頼     = {CFLAG:TARGET:信頼}　（compute.writable_fields，0-100，单轮上限 8）
+PRINTFORML 　恐怖度   = {CFLAG:TARGET:恐怖度}
+PRINTFORML 　亲密度   = {CFLAG:TARGET:亲密度}
+PRINTFORML 　对话次数 = {CFLAG:TARGET:对话次数}　最后对话日 = {CFLAG:TARGET:最后对话日}
+PRINTFORML 　AI回写次数 = {CFLAG:TARGET:AI回写次数}　AI交谈次数 = {CFLAG:TARGET:AI交谈次数}
+PRINTL
+PRINTL 【BASE —— prompt.state_fields】
+PRINTFORML 　体力 = {BASE:TARGET:0} / {MAXBASE:TARGET:0}　（compute 允许 add 与 set）
+PRINTFORML 　气力 = {BASE:TARGET:1} / {MAXBASE:TARGET:1}
+PRINTL
+PRINTL 【TALENT —— 词条 match 条件】
+PRINTFORML 　傲慢 = {TALENT:TARGET:傲慢}　羞恥 = {TALENT:TARGET:羞恥}　素直 = {TALENT:TARGET:素直}
+PRINTFORML 　冷淡 = {TALENT:TARGET:冷淡}　依存 = {TALENT:TARGET:依存}
+PRINTL
+PRINTL 【MARK —— 词条 modifier 条件】
+PRINTFORML 　従順 = {MARK:TARGET:従順}　屈服刻印 = {MARK:TARGET:屈服刻印}
+PRINTL
+PRINTL 【ABL / PALAM —— 供描写引用】
+PRINTFORML 　顺从 {ABL:TARGET:顺从}　话术 {ABL:TARGET:话术}　感性 {ABL:TARGET:感性}
+PRINTFORML 　恭顺 {PALAM:TARGET:恭顺}　欲情 {PALAM:TARGET:欲情}　屈服 {PALAM:TARGET:屈服}
+PRINTL
+PRINTL 【全局】
+PRINTFORML 　所持金 MONEY:0 = {MONEY:0}　（compute 的全局字段，chara_no 填 -1）
+PRINTL
+CALL PRINT_TRAIT_EXPECT, TARGET:0
+DRAWLINE
+PRINTL 用「AI → 预览当前角色 prompt」查看实际装配，与上面的推演对照。
+PRINTL 若两者不一致，先看「AI → 显示词条诊断」，那里会报字段名解析失败。
+PRINTL 想验证真实 API 往返（而不是推演），走主菜单 [109] 的检查清单。
+PRINTL
+
+;---------------------------------------------------------------
+; 词条命中推演。
+;
+; 这里用 ERB 重算一遍 ai_traits.json 的判定条件，不是为了替代引擎，
+; 而是为了在"实际装配结果不符合预期"时能立刻分辨：
+;   推演与实际都命中 → 配置按预期工作
+;   推演命中、实际没有 → 字段名不匹配或 modifier 抑制了它
+;   推演没命中、实际有 → ai_traits.json 被改过，与本文件不同步
+;
+; ARG 是登录号。
+;---------------------------------------------------------------
+@PRINT_TRAIT_EXPECT, ARG
+#DIM TARGETREG
+TARGETREG = ARG
+
+PRINTL 【本地推演：预期命中的词条】（ERB 侧计算，不发任何网络请求）
+; baseline: always=true，永远命中（priority 10，只在还有名额时占位）
+PRINTL 　baseline（基础基调）　always=true
+
+; tsundere: 好感度 20-100 且 (傲慢>=1 或 羞恥>=1)；好感度>85 时被抑制
+IF CFLAG:TARGETREG:好感度 >= 20 && CFLAG:TARGETREG:好感度 <= 100
+	IF TALENT:TARGETREG:傲慢 >= 1 || TALENT:TARGETREG:羞恥 >= 1
+		IF CFLAG:TARGETREG:好感度 > 85
+			PRINTL 　tsundere　match 命中，但 modifier「好感度>85」抑制 → 不进 prompt
+		ELSE
+			PRINTL 　tsundere（傲娇）　weight 120 + priority 55
+			SIF MARK:TARGETREG:従順 >= 3
+				PRINTL 　　　└ modifier「従順>=3」追加约束：独处时主动靠近但被指出就否认
+		ENDIF
+	ENDIF
+ENDIF
+
+; honest: 素直>=1；与 tsundere 硬冲突（weight 110 < 120，冲突时输）
+IF TALENT:TARGETREG:素直 >= 1
+	IF CFLAG:TARGETREG:好感度 >= 20 && CFLAG:TARGETREG:好感度 <= 100 && CFLAG:TARGETREG:好感度 <= 85 && (TALENT:TARGETREG:傲慢 >= 1 || TALENT:TARGETREG:羞恥 >= 1)
+		PRINTL 　honest　match 命中，但与 tsundere 硬冲突且 weight 更低 → 被丢弃
+	ELSE
+		PRINTL 　honest（坦率）　weight 110 + priority 55
+	ENDIF
+ENDIF
+
+; cold: 好感度<=25；従順>=3 时被抑制
+IF CFLAG:TARGETREG:好感度 <= 25
+	IF MARK:TARGETREG:従順 >= 3
+		PRINTL 　cold　match 命中，但 modifier「従順>=3」抑制 → 不进 prompt
+	ELSE
+		PRINTL 　cold（冷淡）　weight 100 + priority 40
+	ENDIF
+ENDIF
+
+; clingy: 好感度>=70；与 cold 硬冲突（两者条件互斥，实际不会同时出现）
+SIF CFLAG:TARGETREG:好感度 >= 70
+	PRINTL 　clingy（黏人）　weight 105 + priority 45
+
+; exhausted: BASE:0<=20
+SIF BASE:TARGETREG:0 <= 20
+	PRINTL 　exhausted（疲惫）　weight 90 + priority 30
+PRINTL
+
+;---------------------------------------------------------------
+; 切换对话对象。改的是 TARGET，词条 prompt 会立刻跟着变。
+;---------------------------------------------------------------
+@SELECT_TARGET
+PRINTL
+DRAWLINE
+PRINTL 选择对话对象
+DRAWLINE
+FOR LOCAL, 0, CHARANUM
+	PRINTFORML 　[{LOCAL}] %NAME:LOCAL%（番号 {NO:LOCAL}　好感度 {CFLAG:LOCAL:好感度}　体力 {BASE:LOCAL:0}）
+NEXT
+PRINTL
+PRINTL 输入登录号（0 是主角，一般不作为对象）：
+INPUT
+
+IF RESULT >= 0 && RESULT < CHARANUM
+	TARGET:0 = RESULT
+	PRINTL
+	PRINTFORML 对话对象已切换为 %NAME:TARGET%。
+	PRINTL
+	CALL PRINT_TRAIT_EXPECT, TARGET:0
+ELSE
+	PRINTL 无效的登录号，未做修改。
+ENDIF
+PRINTL
+
+;---------------------------------------------------------------
+; 全部角色一览
+;---------------------------------------------------------------
+@SHOW_ALL_CHARA
+PRINTL
+DRAWLINE
+PRINTFORML 已登录角色数：{CHARANUM}
+DRAWLINE
+FOR LOCAL, 0, CHARANUM
+	PRINTFORM 　[{LOCAL}] %NAME:LOCAL%
+	PRINTFORM 　好感 {CFLAG:LOCAL:好感度}
+	PRINTFORM 　信頼 {CFLAG:LOCAL:信頼}
+	PRINTFORM 　体力 {BASE:LOCAL:0}/{MAXBASE:LOCAL:0}
+	PRINTFORM 　傲慢 {TALENT:LOCAL:傲慢}
+	PRINTFORM 　素直 {TALENT:LOCAL:素直}
+	PRINTFORM 　冷淡 {TALENT:LOCAL:冷淡}
+	PRINTFORML 　従順 {MARK:LOCAL:従順}
+NEXT
+DRAWLINE
+PRINTL
+
+;---------------------------------------------------------------
+; 手动改数值
+;---------------------------------------------------------------
+@MANUAL_EDIT
+PRINTL
+DRAWLINE
+PRINTFORML 手动修改 %NAME:TARGET% 的数值
+DRAWLINE
+PRINTL 　[0] 好感度　　　[1] 信頼　　　[2] 恐怖度
+PRINTL 　[3] 亲密度　　　[4] 体力　　　[5] 气力
+PRINTL 　[6] 従順(MARK)　[7] 所持金　　[8] 傲慢(TALENT)
+PRINTL 　[9] 素直(TALENT)
+PRINTL 　[99] 返回
+PRINTL
+PRINTL 选择要修改的项目：
+INPUT
+LOCAL = RESULT
+
+SIF LOCAL == 99
+	RETURN
+
+PRINTL 输入新的数值：
+INPUT
+LOCAL:1 = RESULT
+
+SELECTCASE LOCAL
+	CASE 0
+		CFLAG:TARGET:好感度 = LOCAL:1
+		PRINTFORML 好感度 → {CFLAG:TARGET:好感度}
+	CASE 1
+		CFLAG:TARGET:信頼 = LOCAL:1
+		PRINTFORML 信頼 → {CFLAG:TARGET:信頼}
+	CASE 2
+		CFLAG:TARGET:恐怖度 = LOCAL:1
+		PRINTFORML 恐怖度 → {CFLAG:TARGET:恐怖度}
+	CASE 3
+		CFLAG:TARGET:亲密度 = LOCAL:1
+		PRINTFORML 亲密度 → {CFLAG:TARGET:亲密度}
+	CASE 4
+		BASE:TARGET:0 = LOCAL:1
+		PRINTFORML 体力 → {BASE:TARGET:0}
+	CASE 5
+		BASE:TARGET:1 = LOCAL:1
+		PRINTFORML 气力 → {BASE:TARGET:1}
+	CASE 6
+		MARK:TARGET:従順 = LOCAL:1
+		PRINTFORML 従順 → {MARK:TARGET:従順}
+	CASE 7
+		MONEY:0 = LOCAL:1
+		PRINTFORML 所持金 → {MONEY:0}
+	CASE 8
+		TALENT:TARGET:傲慢 = LOCAL:1
+		PRINTFORML 傲慢 → {TALENT:TARGET:傲慢}
+	CASE 9
+		TALENT:TARGET:素直 = LOCAL:1
+		PRINTFORML 素直 → {TALENT:TARGET:素直}
+	CASEELSE
+		PRINTL 无效项目。
+ENDSELECT
+PRINTL
+CALL PRINT_TRAIT_EXPECT, TARGET:0

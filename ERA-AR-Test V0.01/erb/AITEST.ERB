@@ -1,0 +1,285 @@
+;===============================================================
+; AITEST.ERB —— AI 联调专用工具函数
+;
+; 这一份里的东西都不是游戏内容，纯粹是为了让 AI 模块的每一层
+; 都有一个"能在界面上肉眼确认"的入口：
+;   AI_SCENE_PRESET      一键把某条词条的命中条件摆好
+;   AI_EXPECT_SELFCHECK  对全部角色跑一遍本地推演，与实际装配对照
+;   AI_INJECT_TEST       提供各类输入等待状态，供 P4 交互注入测试
+;   AI_SHOW_COUNTERS     打印联调计数器
+;===============================================================
+
+;---------------------------------------------------------------
+; 场景预设。
+;
+; 词条系统的条件全是数值区间，手工一个个改很容易改漏。
+; 这里把每条词条的"最小充分条件"固化成一个选项，
+; 选完之后直接用「AI → 预览当前角色 prompt」就能看到对应结果。
+;
+; 预设作用于当前 TARGET。
+;---------------------------------------------------------------
+@AI_SCENE_PRESET
+PRINTL
+DRAWLINE
+PRINTFORML 场景预设　对象：%NAME:TARGET%（登录号 {TARGET:0}）
+DRAWLINE
+PRINTL 　[0] tsundere 命中　　好感度 40、傲慢 1、羞恥 1、従順 0
+PRINTL 　[1] tsundere 被抑制　好感度 92（触发 modifier「好感度>85」）
+PRINTL 　[2] tsundere + 追加约束　好感度 40、従順 3
+PRINTL 　[3] honest 命中　　　好感度 40、素直 1、傲慢 0、羞恥 0
+PRINTL 　[4] honest × tsundere 硬冲突　素直 1、傲慢 1、好感度 40
+PRINTL 　[5] cold 命中　　　　好感度 10、従順 0
+PRINTL 　[6] cold 被抑制　　　好感度 10、従順 4
+PRINTL 　[7] clingy 命中　　　好感度 75
+PRINTL 　[8] exhausted 命中　 体力 10
+PRINTL 　[9] 只剩 baseline　　好感度 30、素质全清、体力满
+PRINTL
+PRINTL 　[20] 让副 API 有事可做：体力 40、好感度 45、所持金 3000
+PRINTL 　[99] 返回
+PRINTL
+PRINTL 选择预设编号：
+INPUT
+
+SELECTCASE RESULT
+	CASE 0
+		CALL PRESET_CLEAR
+		CFLAG:TARGET:好感度 = 40
+		TALENT:TARGET:傲慢 = 1
+		TALENT:TARGET:羞恥 = 1
+		PRINTL 已设置：tsundere 应当命中。
+	CASE 1
+		CALL PRESET_CLEAR
+		CFLAG:TARGET:好感度 = 92
+		TALENT:TARGET:傲慢 = 1
+		PRINTL 已设置：tsundere 的 match 命中但被 modifier 抑制，应当只剩 clingy + baseline。
+	CASE 2
+		CALL PRESET_CLEAR
+		CFLAG:TARGET:好感度 = 40
+		TALENT:TARGET:傲慢 = 1
+		MARK:TARGET:従順 = 3
+		PRINTL 已设置：tsundere 命中且带 modifier 追加的约束句。
+	CASE 3
+		CALL PRESET_CLEAR
+		CFLAG:TARGET:好感度 = 40
+		TALENT:TARGET:素直 = 1
+		PRINTL 已设置：honest 应当命中（无 tsundere 竞争）。
+	CASE 4
+		CALL PRESET_CLEAR
+		CFLAG:TARGET:好感度 = 40
+		TALENT:TARGET:素直 = 1
+		TALENT:TARGET:傲慢 = 1
+		PRINTL 已设置：honest 与 tsundere 都命中 match，硬冲突后应当只剩 tsundere。
+	CASE 5
+		CALL PRESET_CLEAR
+		CFLAG:TARGET:好感度 = 10
+		TALENT:TARGET:冷淡 = 1
+		PRINTL 已设置：cold 应当命中。
+	CASE 6
+		CALL PRESET_CLEAR
+		CFLAG:TARGET:好感度 = 10
+		TALENT:TARGET:冷淡 = 1
+		MARK:TARGET:従順 = 4
+		PRINTL 已设置：cold 的 match 命中但被 modifier 抑制，应当只剩 baseline。
+	CASE 7
+		CALL PRESET_CLEAR
+		CFLAG:TARGET:好感度 = 75
+		PRINTL 已设置：clingy 应当命中。
+	CASE 8
+		CALL PRESET_CLEAR
+		CFLAG:TARGET:好感度 = 40
+		BASE:TARGET:0 = 10
+		PRINTL 已设置：exhausted 应当命中（体力 10 <= 20）。
+	CASE 9
+		CALL PRESET_CLEAR
+		CFLAG:TARGET:好感度 = 30
+		PRINTL 已设置：除 baseline 外都不应命中。
+	CASE 20
+		CFLAG:TARGET:好感度 = 45
+		BASE:TARGET:0 = 40
+		MONEY:0 = 3000
+		PRINTL 已设置：好感度与体力都留出了上下调整的余量，所持金也不为 0。
+		PRINTL 这样副 API 的 add 不会因为撞到 min/max 而被 clamp 成 0，便于观察真实增量。
+	CASE 99
+		RETURN
+	CASEELSE
+		PRINTL 无效编号。
+		RETURN
+ENDSELECT
+
+PRINTL
+CALL PRINT_TRAIT_EXPECT, TARGET:0
+PRINTL 现在用「AI → 预览当前角色 prompt」核对实际装配。
+PRINTL
+
+;---------------------------------------------------------------
+; 清空当前对象的词条相关数值。
+; 只清与 ai_traits.json 判定有关的字段，外观素质（300+）保留，
+; 否则角色的描写基础信息会被一起清掉。
+;---------------------------------------------------------------
+@PRESET_CLEAR
+TALENT:TARGET:傲慢 = 0
+TALENT:TARGET:羞恥 = 0
+TALENT:TARGET:素直 = 0
+TALENT:TARGET:冷淡 = 0
+TALENT:TARGET:依存 = 0
+MARK:TARGET:従順 = 0
+BASE:TARGET:0 = MAXBASE:TARGET:0
+BASE:TARGET:1 = MAXBASE:TARGET:1
+
+;---------------------------------------------------------------
+; 词条命中预期自检：对全部已登录角色跑一遍本地推演。
+;
+; 这不是断言式自检（ERB 里拿不到引擎实际装配的结果），
+; 而是把"每个角色应该命中什么"一次性列出来，
+; 然后逐个切换 TARGET 用「预览当前角色 prompt」比对。
+; 出现不一致时，差异集中在哪个角色就能立刻定位到是哪一类条件写错了。
+;---------------------------------------------------------------
+@AI_EXPECT_SELFCHECK
+PRINTL
+DRAWLINE
+PRINTL 词条命中预期自检（本地推演，覆盖全部已登录角色）
+DRAWLINE
+FOR LOCAL, 0, CHARANUM
+	PRINTL
+	PRINTFORML ── [{LOCAL}] %NAME:LOCAL%　好感 {CFLAG:LOCAL:好感度}　体力 {BASE:LOCAL:0}　傲慢 {TALENT:LOCAL:傲慢}　羞恥 {TALENT:LOCAL:羞恥}　素直 {TALENT:LOCAL:素直}　従順 {MARK:LOCAL:従順}
+	CALL PRINT_TRAIT_EXPECT, LOCAL
+NEXT
+DRAWLINE
+PRINTL 核对方法：用 [101] 逐个切换对象，每次执行「AI → 预览当前角色 prompt」，
+PRINTL 　　　　　把面板打印的「命中：xxx」与上面的推演逐条对比。
+PRINTL 若某个角色的实际命中数为 0 而推演不为 0，多半是 CSV 里的下标名
+PRINTL 与 ai_traits.json 不一致（这种错误引擎不报，只会静默不命中）。
+DRAWLINE
+PRINTL
+
+;---------------------------------------------------------------
+; 输入注入测试（P4 交互控制）。
+;
+; AiActionExecutor 执行前会核对"引擎此刻在等哪种输入"，类型不匹配就拒绝。
+; 所以要验证注入，必须有一个地方让引擎停在明确的等待状态上。
+; 这里提供三种：整数、字符串、单字符。
+;
+; 用法：进入某一种等待后，切到 AI 面板让副 API 提出交互指令，
+;       再用「AI → 执行待执行动作」把载荷喂进来，看这里打印出什么。
+;---------------------------------------------------------------
+@AI_INJECT_TEST
+PRINTL
+DRAWLINE
+PRINTL 输入注入测试
+DRAWLINE
+PRINTL 　[0] 整数等待（INPUT）　　　→ 对应 kind=input_int 或命令载荷
+PRINTL 　[1] 字符串等待（INPUTS）　 → 对应 kind=input_str
+PRINTL 　[2] 单字符等待（ONEINPUT）→ 应当被拒绝：载荷超过 1 字符会被截断
+PRINTL 　[99] 返回
+PRINTL
+PRINTL 选择：
+INPUT
+LOCAL = RESULT
+
+SELECTCASE LOCAL
+	CASE 0
+		PRINTL
+		PRINTL 现在处于整数等待。输入 999 退出，其它数值会被回显。
+		REPEAT 100
+			INPUT
+			SIF RESULT == 999
+				BREAK
+			PRINTFORML 　收到整数：{RESULT}
+		REND
+		PRINTL 整数等待结束。
+	CASE 1
+		PRINTL
+		PRINTL 现在处于字符串等待。输入 end 退出，其它文本会被回显。
+		REPEAT 100
+			INPUTS
+			SIF RESULTS == "end"
+				BREAK
+			PRINTFORML 　收到文本：%RESULTS%
+		REND
+		PRINTL 字符串等待结束。
+	CASE 2
+		PRINTL
+		PRINTL 现在处于单字符等待（ONEINPUT）。按任意数字键继续。
+		PRINTL 此状态下多字符载荷会被 AiActionExecutor 拒绝，理由是「会被截断」。
+		ONEINPUT
+		PRINTFORML 　收到单字符：{RESULT}
+	CASE 99
+		RETURN
+	CASEELSE
+		PRINTL 无效编号。
+ENDSELECT
+PRINTL
+
+;---------------------------------------------------------------
+; 联调计数器。
+; 这些计数全部由 ERB 侧累加，与 AI 模块无关——
+; 它们回答的是"这条流程到底被走过几次"，用于排除"其实根本没触发"。
+;---------------------------------------------------------------
+@AI_SHOW_COUNTERS
+PRINTL
+DRAWLINE
+PRINTL AI 联调计数器
+DRAWLINE
+PRINTFORML 　全局　AI交谈总次数 = {FLAG:AI交谈总次数}
+PRINTFORML 　全局　AI回写总次数 = {FLAG:AI回写总次数}（由 [103] 手动改数值时不累加，仅供人工登记）
+PRINTL
+FOR LOCAL, 0, CHARANUM
+	SIF CFLAG:LOCAL:对话次数 == 0 && CFLAG:LOCAL:AI交谈次数 == 0
+		CONTINUE
+	PRINTFORML 　[{LOCAL}] %NAME:LOCAL%　对话 {CFLAG:LOCAL:对话次数} 次　AI交谈 {CFLAG:LOCAL:AI交谈次数} 次　最后对话日 {CFLAG:LOCAL:最后对话日}
+NEXT
+DRAWLINE
+PRINTL
+
+;---------------------------------------------------------------
+; 真实 API 往返检查清单。
+;
+; 为什么需要这一页：本文件里 [106] 与 @PRINT_TRAIT_EXPECT 打印的都是
+; **ERB 侧的本地推演**，它只是把 ai_traits.json 的条件用 ERB 重算一遍，
+; 一行网络请求都不发。菜单里的「发起测试请求(P0 假数据)」同样不发网络请求
+; （它把 AiDispatcher.UseFakeBackend 置为 true）。
+; 于是很容易出现"看着满屏 AI 输出，其实一次都没调过 API"的误判。
+;
+; 真正会发出网络请求的入口只有一个：AI 面板里输入台词后点「发送」。
+;---------------------------------------------------------------
+@AI_REAL_API_GUIDE
+PRINTL
+DRAWLINE
+PRINTL 真实 API 往返检查清单
+DRAWLINE
+PRINTL
+PRINTL 【哪些入口不发网络请求】
+PRINTL 　· 本环境 [100]／[106] 打印的「本地推演」 —— 纯 ERB 计算
+PRINTL 　· AI → 发起测试请求(P0 假数据) 　　　 —— 假后端，只验调度与硬锁定
+PRINTL 　· AI → 预览当前角色 prompt 　　　　　 —— 只装配 prompt，不发送
+PRINTL 　· AI → 预览副 API 请求 　　　　　　　 —— 只装配请求体，不发送
+PRINTL
+PRINTL 【唯一会发网络请求的入口】
+PRINTL 　AI → 显示/隐藏 AI 面板 → 在输入框写玩家台词 → 点「发送」
+PRINTL
+PRINTL 【发送前先确认端点】
+PRINTL 　AI → 显示 API 端点解析结果
+PRINTL 　　"配置值"与"实际请求"两行都要指向 .../v1/chat/completions。
+PRINTL 　　只填域名根路径时，网关会用自己的首页回 HTTP 200 + HTML，
+PRINTL 　　"测试连接"看着成功，真实请求却解析不出正文 —— 表现成 AI 不回话。
+PRINTL
+PRINTL 【发送后按顺序核对四处】
+PRINTL 　1. 面板出现 [词条] 一行 → 说明本轮 prompt 用的是词条装配结果，
+PRINTL 　　 括号里的分数应与本地推演一致；写着「未使用词条」则看括号里的原因。
+PRINTL 　2. 面板出现 [数值] 一行 → 副 API 是否真的写了 CFLAG。
+PRINTL 　　 「本轮未改动」后面的原因就是它没写的理由。
+PRINTL 　3. 面板出现 [AI] 正文与「完成（xxx ms）」 → 毫秒数是真实往返耗时，
+PRINTL 　　 假后端固定是设置里的 FakeDelayMs，两者可据此区分。
+PRINTL 　4. 回到本菜单 [100] 复查好感度／信頼，与第 2 步的数字对账。
+PRINTL
+PRINTL 【实际命中要看引擎，不要看推演】
+PRINTL 　AI → 预览当前角色 prompt 打印的才是引擎实际装配：
+PRINTL 　　[AI] 角色号 N（登录号 M），命中 K 条词条。
+PRINTL 　　[AI] 命中：傲娇(tsundere) 得分 175 优先级 55
+PRINTL 　推演与实际不一致时，先看 AI → 显示词条诊断。
+PRINTL
+PRINTL 【失败时的日志】
+PRINTL 　AI → 显示调度日志　　　　 请求开始／词条装配／错误分类都在这里
+PRINTL 　AI → 显示上轮副 API 往返　 请求体、原始响应、被拒的字段
+DRAWLINE
+PRINTL

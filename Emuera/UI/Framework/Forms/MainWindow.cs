@@ -1,4 +1,4 @@
-using MinorShift.Emuera.GameView;
+﻿using MinorShift.Emuera.GameView;
 using MinorShift.Emuera.Runtime.Config;
 using MinorShift.Emuera.Runtime.Script;
 using MinorShift.Emuera.Runtime.Script.Statements;
@@ -820,6 +820,9 @@ namespace MinorShift.Emuera.Forms
 			AI.AiSelfTest.Arm(console);
 			AI.Traits.AiTraitSelfTest.Arm(console);
 			AI.Compute.AiComputeSelfTest.Arm(console);
+			AI.Interact.AiInteractSelfTest.Arm(console);
+			AI.Context.AiContextSelfTest.Arm(console);
+			AI.Security.AiSecuritySelfTest.Arm(console);
 			#endregion
 			await console.Initialize();
 		}
