@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
@@ -23,8 +23,32 @@ internal sealed class AiTurnResult
 	/// <summary>主 API 产出的叙事正文。</summary>
 	public string NarrativeText = "";
 
-	/// <summary>副 API 产出的数值变更集（P0 阶段为假数据）。</summary>
+	/// <summary>本轮由调度器直接回写的数值变更（P0 假后端路径使用）。</summary>
 	public List<AiValueChange> Changes = [];
+
+	/// <summary>本轮标识，与副 API 的 turn_id 一致。</summary>
+	public string TurnId;
+
+	/// <summary>副 API 已落盘的变更（含写入前的值，可用于回滚）。</summary>
+	public List<Compute.AiAppliedChange> ComputeApplied = [];
+
+	/// <summary>副 API 的结果提示，已并入主 API 的本轮输入。</summary>
+	public string ComputeHint;
+
+	/// <summary>副 API 自报的不确定项。</summary>
+	public List<string> ComputeWarnings = [];
+
+	/// <summary>副 API 未参与本轮的原因（正常跳过或失败），非空时数值未被改动。</summary>
+	public string ComputeSkipReason;
+
+	/// <summary>
+	/// 数值已写入但叙事失败（RISK-05）。此时 ComputeApplied 非空且存档已变，
+	/// 调度器会保留一份待处置事务，供「仅重生成文本」或「回滚本轮数值」使用。
+	/// </summary>
+	public bool NarrativeFailedAfterApply;
+
+	/// <summary>终止或失败后是否已把数值回滚回写入前的状态。</summary>
+	public bool ComputeRolledBack;
 
 	/// <summary>失败原因，仅用于展示与日志，不含密钥。</summary>
 	public string ErrorMessage;

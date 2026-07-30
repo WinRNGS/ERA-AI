@@ -818,6 +818,8 @@ namespace MinorShift.Emuera.Forms
 			// 仅在设置了 ERA_AI_SELFTEST=1 时激活，正常运行不受影响。
 			// 放在 Initialize 之前挂载，以便加载阶段出错时也能产出诊断报告。
 			AI.AiSelfTest.Arm(console);
+			AI.Traits.AiTraitSelfTest.Arm(console);
+			AI.Compute.AiComputeSelfTest.Arm(console);
 			#endregion
 			await console.Initialize();
 		}

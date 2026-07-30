@@ -245,8 +245,9 @@ internal static class AiSelfTest
 
 	private static void TestValidationRejectsNonWhitelisted()
 	{
-		// DAY 是真实存在的可写变量，但不在白名单内，必须被拒。
-		var change = new AiValueChange { Target = "DAY", Op = "set", Value = 999 };
+		// RESULT 是真实存在的可写变量，但属于控制流变量，不在白名单内，必须被拒。
+		// 这里刻意不用 DAY：P1 把 DAY 纳入白名单后该断言会失效，换成永远不该开放的控制流变量更稳。
+		var change = new AiValueChange { Target = "RESULT:0", Op = "set", Value = 999 };
 		bool ok = AiVariableAccess.Validate(change, out string error);
 		Check($"拒绝白名单外的真实变量（{Brief(error)}）", !ok);
 	}
